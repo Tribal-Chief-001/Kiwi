@@ -79,22 +79,31 @@ Traditional speed tests either demand heavy browser windows (swallowing 500MB–
 
 ---
 
-## 📦 Installation
+## 📦 Universal One-Line Installation (Zero Prerequisites)
 
-### Option 1: Cargo (Recommended)
+No Rust, no Python, no compilers, and zero dependencies required. Run one command in your terminal, and `kiwi` is instantly installed to your path and ready to run forever.
 
+### 🐧 Linux & 🍎 macOS (Terminal)
 ```bash
-# Install directly from crates.io (or via git repository)
-cargo install --git https://github.com/Tribal-Chief-001/Kiwi.git
+curl -fsSL https://raw.githubusercontent.com/Tribal-Chief-001/Kiwi/main/install.sh | bash
+```
 
-# Type 'kiwi' from anywhere!
+### 🪟 Windows (PowerShell / Windows Terminal)
+```powershell
+irm https://raw.githubusercontent.com/Tribal-Chief-001/Kiwi/main/install.ps1 | iex
+```
+
+---
+⚡ **Done!** Open any terminal anytime and simply type:
+```bash
 kiwi
 ```
 
-### Option 2: Pre-compiled Binary (Linux & macOS One-Liner)
+### Option 2: Cargo (For Rust Developers)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tribal-Chief-001/Kiwi/main/install.sh | bash
+cargo install --git https://github.com/Tribal-Chief-001/Kiwi.git
+kiwi
 ```
 
 ### Option 3: Build from Source

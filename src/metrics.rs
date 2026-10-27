@@ -42,10 +42,7 @@ impl LatencyStats {
 
         // Calculate jitter (mean absolute deviation between consecutive samples)
         let jitter_ms = if samples.len() > 1 {
-            let sum_diff: f64 = samples
-                .windows(2)
-                .map(|w| (w[1] - w[0]).abs())
-                .sum();
+            let sum_diff: f64 = samples.windows(2).map(|w| (w[1] - w[0]).abs()).sum();
             sum_diff / (samples.len() - 1) as f64
         } else {
             0.0

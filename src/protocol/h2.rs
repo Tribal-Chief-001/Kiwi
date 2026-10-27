@@ -1,6 +1,6 @@
 use crate::metrics::EdgeTelemetry;
 use crate::protocol::telemetry::parse_edge_telemetry;
-use crate::protocol::{ProbePendingGuard, PROBE_TIMEOUT};
+use crate::protocol::{PROBE_TIMEOUT, ProbePendingGuard};
 use bytes::Bytes;
 use h2::client::{Builder, SendRequest};
 use http::{Method, Request};
@@ -31,27 +31,29 @@ pub struct H2Client {
 }
 
 impl H2Client {
-    pub async fn new(tls_stream: TlsStream<TcpStream>, host: String) -> Result<Self, std::io::Error> {
+    pub async fn new(
+        tls_stream: TlsStream<TcpStream>,
+        host: String,
+    ) -> Result<Self, std::io::Error> {
         let mut builder = Builder::new();
         // Dynamic BDP window scaling: 1MB stream, 2MB connection window
         builder.initial_window_size(1024 * 1024);
         builder.initial_connection_window_size(2048 * 1024);
         builder.max_concurrent_streams(128);
 
-        let (send_request, connection) = builder
-            .handshake(tls_stream)
-            .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionAborted, format!("H2 handshake failed: {:?}", e)))?;
+        let (send_request, connection) = builder.handshake(tls_stream).await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                format!("H2 handshake failed: {:?}", e),
+            )
+        })?;
 
         // Drive the connection state machine on Tokio background
         tokio::spawn(async move {
             let _ = connection.await;
         });
 
-        Ok(H2Client {
-            send_request,
-            host,
-        })
+        Ok(H2Client { send_request, host })
     }
 
     /// Dispatch a single in-band latency probe to measure RTT without bulk stream distortion.
@@ -87,30 +89,40 @@ impl H2Client {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
         let start = Instant::now();
-        let mut ready_client = self
-            .send_request
-            .clone()
-            .ready()
-            .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotConnected, format!("Client not ready: {:?}", e)))?;
+        let mut ready_client = self.send_request.clone().ready().await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                format!("Client not ready: {:?}", e),
+            )
+        })?;
 
-        let (response_future, _) = ready_client
-            .send_request(request, true)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, format!("Send request failed: {:?}", e)))?;
+        let (response_future, _) = ready_client.send_request(request, true).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                format!("Send request failed: {:?}", e),
+            )
+        })?;
 
         // De-assert probe pending once request is queued onto the wire
         drop(guard);
 
-        let response = response_future
-            .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::TimedOut, format!("Probe response error: {:?}", e)))?;
+        let response = response_future.await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("Probe response error: {:?}", e),
+            )
+        })?;
 
         let edge_telemetry = parse_edge_telemetry(response.headers());
         let mut body = response.into_body();
 
         while let Some(chunk_res) = body.data().await {
-            let chunk = chunk_res
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("Chunk error: {:?}", e)))?;
+            let chunk = chunk_res.map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!("Chunk error: {:?}", e),
+                )
+            })?;
             let len = chunk.len();
             let _ = body.flow_control().release_capacity(len);
         }
@@ -238,7 +250,9 @@ impl H2Client {
             let mut offset = 0;
 
             // Stream upload chunks
-            while !stop_signal.load(Ordering::Relaxed) && offset + chunk_size <= upload_chunk_slice.len() {
+            while !stop_signal.load(Ordering::Relaxed)
+                && offset + chunk_size <= upload_chunk_slice.len()
+            {
                 // Reserve send capacity
                 send_stream.reserve_capacity(chunk_size);
                 match send_stream.capacity() {

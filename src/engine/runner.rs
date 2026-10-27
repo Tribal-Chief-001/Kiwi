@@ -1,16 +1,17 @@
 use crate::cli::Cli;
 use crate::engine::probe::ClientHandle;
 use crate::metrics::{
-    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, ResourceProfile, ThroughputStats,
+    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, ResourceProfile,
+    ThroughputStats,
 };
 use crate::platform::detect_platform_info;
-use crate::protocol::dns::{resolve_host, DnsCandidates};
+use crate::protocol::dns::{DnsCandidates, resolve_host};
 use crate::protocol::h2::H2Client;
 use crate::protocol::happy_eyeballs::connect_happy_eyeballs;
 use crate::protocol::http1::Http1Client;
 use crate::ui::{LiveUiState, TerminalRenderer, TestPhase};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::time::sleep;
@@ -22,7 +23,10 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     let platform_info = detect_platform_info(cli.interface.as_deref());
 
     if cli.plain && !cli.is_json_effective() {
-        println!("🥝 KIWI: Starting network intelligence benchmark on {}...", platform_info.interface_name);
+        println!(
+            "🥝 KIWI: Starting network intelligence benchmark on {}...",
+            platform_info.interface_name
+        );
     }
 
     // 2. DNS Resolution via Happy Eyeballs candidates
@@ -33,13 +37,22 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     let cold_start_ms = bench_start.elapsed().as_secs_f64() * 1000.0;
 
     let proto_desc = {
-        let ip_family = if conn.is_ipv6 { "Dual-Stack IPv6" } else { "IPv4" };
+        let ip_family = if conn.is_ipv6 {
+            "Dual-Stack IPv6"
+        } else {
+            "IPv4"
+        };
         let alpn = conn
             .alpn
             .as_deref()
             .map(|p| String::from_utf8_lossy(p).into_owned())
             .unwrap_or_else(|| "http/1.1".to_string());
-        format!("{} ({}) · {} over TLS 1.3", ip_family, conn.peer_addr.ip(), alpn)
+        format!(
+            "{} ({}) · {} over TLS 1.3",
+            ip_family,
+            conn.peer_addr.ip(),
+            alpn
+        )
     };
 
     // 4. Initialize Client Protocol Engine (HTTP/2 or HTTP/1.1 based on negotiated ALPN)
@@ -47,7 +60,10 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     let mut client = if is_h2 {
         ClientHandle::H2(H2Client::new(conn.tls_stream, cli.host.clone()).await?)
     } else {
-        ClientHandle::Http1(Box::new(Http1Client::new(conn.tls_stream, cli.host.clone())))
+        ClientHandle::Http1(Box::new(Http1Client::new(
+            conn.tls_stream,
+            cli.host.clone(),
+        )))
     };
 
     // 5. Initialize Live UI State & Terminal Renderer
@@ -119,13 +135,8 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         candidates: &candidates,
         specified_iface: cli.interface.as_deref(),
     };
-    let (download_stats, loaded_down_latency, down_telem) = run_phase_saturation(
-        &mut client,
-        down_config,
-        &mut ui_state,
-        &mut renderer,
-    )
-    .await;
+    let (download_stats, loaded_down_latency, down_telem) =
+        run_phase_saturation(&mut client, down_config, &mut ui_state, &mut renderer).await;
 
     if let Some(t) = down_telem {
         merge_telemetry(&mut edge_telemetry, t);
@@ -146,7 +157,8 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         ClientHandle::Http1(_) => true,
     };
     if !client_healthy
-        && let Ok(conn) = connect_happy_eyeballs(&cli.host, &candidates, cli.interface.as_deref()).await
+        && let Ok(conn) =
+            connect_happy_eyeballs(&cli.host, &candidates, cli.interface.as_deref()).await
     {
         let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
         if is_h2 {
@@ -154,7 +166,10 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
                 client = ClientHandle::H2(new_h2);
             }
         } else {
-            client = ClientHandle::Http1(Box::new(Http1Client::new(conn.tls_stream, cli.host.clone())));
+            client = ClientHandle::Http1(Box::new(Http1Client::new(
+                conn.tls_stream,
+                cli.host.clone(),
+            )));
         }
     }
 
@@ -173,13 +188,8 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         candidates: &candidates,
         specified_iface: cli.interface.as_deref(),
     };
-    let (upload_stats, loaded_up_latency, up_telem) = run_phase_saturation(
-        &mut client,
-        up_config,
-        &mut ui_state,
-        &mut renderer,
-    )
-    .await;
+    let (upload_stats, loaded_up_latency, up_telem) =
+        run_phase_saturation(&mut client, up_config, &mut ui_state, &mut renderer).await;
 
     if let Some(t) = up_telem {
         merge_telemetry(&mut edge_telemetry, t);
@@ -237,7 +247,10 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
 fn chrono_or_now() -> String {
     use std::time::SystemTime;
     let now = SystemTime::now();
-    let secs = now.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let secs = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     format!("Unix({})", secs)
 }
 
@@ -359,7 +372,13 @@ async fn run_phase_saturation(
                 let is_down = config.is_download;
 
                 let handle = tokio::spawn(async move {
-                    if let Ok(conn) = connect_happy_eyeballs(&host_clone, &candidates_clone, iface_clone.as_deref()).await {
+                    if let Ok(conn) = connect_happy_eyeballs(
+                        &host_clone,
+                        &candidates_clone,
+                        iface_clone.as_deref(),
+                    )
+                    .await
+                    {
                         let h1_stream = Http1Client::new(conn.tls_stream, host_clone);
                         if is_down {
                             let res = h1_stream
@@ -378,11 +397,7 @@ async fn run_phase_saturation(
                             }
                         } else {
                             let res = h1_stream
-                                .run_upload_stream(
-                                    bytes_counter,
-                                    stop_flag,
-                                    probe_flag,
-                                )
+                                .run_upload_stream(bytes_counter, stop_flag, probe_flag)
                                 .await;
                             if let Ok(Some(t)) = res {
                                 let mut guard = telem_target.lock().await;
@@ -429,8 +444,14 @@ async fn run_phase_saturation(
                         }
                         Err(_) => {
                             // If H2 connection dropped or desynchronized under loss, reconnect
-                            if let Ok(conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await
-                                && let Ok(new_h2) = H2Client::new(conn.tls_stream, host_probe.clone()).await
+                            if let Ok(conn) = connect_happy_eyeballs(
+                                &host_probe,
+                                &candidates_probe,
+                                iface_probe.as_deref(),
+                            )
+                            .await
+                                && let Ok(new_h2) =
+                                    H2Client::new(conn.tls_stream, host_probe.clone()).await
                             {
                                 probe_client = new_h2;
                             }
@@ -451,8 +472,15 @@ async fn run_phase_saturation(
                         break;
                     }
                     if h1_probe_opt.is_none() {
-                        if let Ok(conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await {
-                            h1_probe_opt = Some(Http1Client::new(conn.tls_stream, host_probe.clone()));
+                        if let Ok(conn) = connect_happy_eyeballs(
+                            &host_probe,
+                            &candidates_probe,
+                            iface_probe.as_deref(),
+                        )
+                        .await
+                        {
+                            h1_probe_opt =
+                                Some(Http1Client::new(conn.tls_stream, host_probe.clone()));
                         } else {
                             attempted_counter.fetch_add(1, Ordering::Relaxed);
                             continue;
@@ -470,8 +498,17 @@ async fn run_phase_saturation(
                             Err(_) => {
                                 // Dead or desynchronized socket is dropped immediately.
                                 // Attempt reconnect for subsequent probes.
-                                if let Ok(new_conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await {
-                                    h1_probe_opt = Some(Http1Client::new(new_conn.tls_stream, host_probe.clone()));
+                                if let Ok(new_conn) = connect_happy_eyeballs(
+                                    &host_probe,
+                                    &candidates_probe,
+                                    iface_probe.as_deref(),
+                                )
+                                .await
+                                {
+                                    h1_probe_opt = Some(Http1Client::new(
+                                        new_conn.tls_stream,
+                                        host_probe.clone(),
+                                    ));
                                 }
                             }
                         }
@@ -532,11 +569,17 @@ async fn run_phase_saturation(
 
     // Stop all workers with timeout safety guards and explicit task abort to prevent task leakage
     stop_signal.store(true, Ordering::Release);
-    if tokio::time::timeout(Duration::from_millis(800), &mut probe_handle).await.is_err() {
+    if tokio::time::timeout(Duration::from_millis(800), &mut probe_handle)
+        .await
+        .is_err()
+    {
         probe_handle.abort();
     }
     for mut h in stream_handles {
-        if tokio::time::timeout(Duration::from_millis(800), &mut h).await.is_err() {
+        if tokio::time::timeout(Duration::from_millis(800), &mut h)
+            .await
+            .is_err()
+        {
             h.abort();
         }
     }
@@ -555,7 +598,8 @@ async fn run_phase_saturation(
         let guard = loaded_samples.lock().await;
         guard.clone()
     };
-    let total_attempted = (attempted_probes.load(Ordering::Relaxed) as usize).max(final_samples.len());
+    let total_attempted =
+        (attempted_probes.load(Ordering::Relaxed) as usize).max(final_samples.len());
     let latency_stats = LatencyStats::calculate(final_samples, total_attempted);
 
     let telem = {

@@ -2,18 +2,18 @@
 /// Col 0 dots: Row 3=0x40 (Dot 7), Row 2=0x04 (Dot 3), Row 1=0x02 (Dot 2), Row 0=0x01 (Dot 1)
 /// Col 1 dots: Row 3=0x80 (Dot 8), Row 2=0x20 (Dot 6), Row 1=0x10 (Dot 5), Row 0=0x08 (Dot 4)
 const COL0_MASKS: [u8; 5] = [
-    0x00,                 // 0 dots
-    0x40,                 // 1 dot (bottom)
-    0x40 | 0x04,          // 2 dots
-    0x40 | 0x04 | 0x02,   // 3 dots
+    0x00,                      // 0 dots
+    0x40,                      // 1 dot (bottom)
+    0x40 | 0x04,               // 2 dots
+    0x40 | 0x04 | 0x02,        // 3 dots
     0x40 | 0x04 | 0x02 | 0x01, // 4 dots (full)
 ];
 
 const COL1_MASKS: [u8; 5] = [
-    0x00,                 // 0 dots
-    0x80,                 // 1 dot (bottom)
-    0x80 | 0x20,          // 2 dots
-    0x80 | 0x20 | 0x10,   // 3 dots
+    0x00,                      // 0 dots
+    0x80,                      // 1 dot (bottom)
+    0x80 | 0x20,               // 2 dots
+    0x80 | 0x20 | 0x10,        // 3 dots
     0x80 | 0x20 | 0x10 | 0x08, // 4 dots (full)
 ];
 
@@ -125,7 +125,10 @@ mod tests {
         assert_eq!(top.chars().count(), 10);
         assert_eq!(bot.chars().count(), 10);
         // Ensure valid braille characters are produced
-        assert!(bot.chars().any(|c| (c as u32) >= 0x2800 && (c as u32) <= 0x28FF));
+        assert!(
+            bot.chars()
+                .any(|c| (c as u32) >= 0x2800 && (c as u32) <= 0x28FF)
+        );
     }
 
     #[test]

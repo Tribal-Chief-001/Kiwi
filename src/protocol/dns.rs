@@ -46,7 +46,10 @@ pub async fn resolve_host(
     if candidates.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AddrNotAvailable,
-            format!("No valid IP addresses resolved for {} (ipv4_only={}, ipv6_only={})", host, ipv4_only, ipv6_only),
+            format!(
+                "No valid IP addresses resolved for {} (ipv4_only={}, ipv6_only={})",
+                host, ipv4_only, ipv6_only
+            ),
         ));
     }
 

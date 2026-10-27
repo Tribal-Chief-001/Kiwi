@@ -2,6 +2,23 @@
 name = "kiwi"
 version = "0.1.0"
 edition = "2024"
+authors = ["Tribal-Chief-001 <raffrajput123@gmail.com>"]
+description = "🥝 Ultra-fast, zero-footprint (<4MB RSS) cross-platform CLI network intelligence and speed test engine"
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/Tribal-Chief-001/Kiwi"
+homepage = "https://github.com/Tribal-Chief-001/Kiwi"
+documentation = "https://github.com/Tribal-Chief-001/Kiwi#readme"
+keywords = ["speedtest", "network", "bandwidth", "cli", "bufferbloat"]
+categories = ["command-line-utilities", "network-programming"]
+
+[lib]
+name = "kiwi"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kiwi"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

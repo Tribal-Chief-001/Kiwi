@@ -54,7 +54,10 @@ pub async fn run_idle_latency_test(
                             *client = ClientHandle::H2(h2);
                         }
                     } else {
-                        *client = ClientHandle::Http1(Box::new(Http1Client::new(conn.tls_stream, host.to_string())));
+                        *client = ClientHandle::Http1(Box::new(Http1Client::new(
+                            conn.tls_stream,
+                            host.to_string(),
+                        )));
                     }
                 }
             }

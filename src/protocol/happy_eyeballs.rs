@@ -24,8 +24,12 @@ pub async fn connect_happy_eyeballs(
     candidates: &DnsCandidates,
     specified_iface: Option<&str>,
 ) -> Result<EstablishedConnection, std::io::Error> {
-    let server_name: ServerName<'static> = ServerName::try_from(host.to_string())
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("Invalid server name: {:?}", e)))?;
+    let server_name: ServerName<'static> = ServerName::try_from(host.to_string()).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid server name: {:?}", e),
+        )
+    })?;
 
     // Attempt race between IPv6 and IPv4
     let (tcp_stream, peer_addr, is_ipv6) = race_tcp_connection(candidates, specified_iface).await?;
@@ -145,7 +149,10 @@ async fn race_tcp_connection(
     }
 }
 
-async fn connect_single(addr: SocketAddr, specified_iface: Option<&str>) -> Result<TcpStream, std::io::Error> {
+async fn connect_single(
+    addr: SocketAddr,
+    specified_iface: Option<&str>,
+) -> Result<TcpStream, std::io::Error> {
     let stream = TcpStream::connect(addr).await?;
     let _ = stream.set_nodelay(true);
     apply_socket_optimizations(&stream, specified_iface);

@@ -1,7 +1,7 @@
 use clap::Parser;
 use kiwi::cli::Cli;
 use kiwi::engine;
-use kiwi::safety::{restore_terminal, setup_panic_hook, setup_signal_handlers, WindowsTimerGuard};
+use kiwi::safety::{WindowsTimerGuard, restore_terminal, setup_panic_hook, setup_signal_handlers};
 
 fn main() {
     // Install panic hook early to ensure terminal cursor restoration on any crash

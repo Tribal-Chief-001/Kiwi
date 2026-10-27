@@ -2,7 +2,9 @@ pub mod bento;
 pub mod braille;
 pub mod layout;
 
-use crate::metrics::{BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, ResourceProfile};
+use crate::metrics::{
+    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, ResourceProfile,
+};
 use crate::ui::braille::{calculate_gauge_scale, render_braille_canvas, render_tachometer};
 use crate::ui::layout::{LayoutMode, TerminalLayout};
 use std::io::Write;
@@ -66,7 +68,9 @@ impl TerminalRenderer {
                 let sep = "─".repeat(width);
 
                 // Line 1: Header
-                buffer.push_str("\x1b[1;32m🥝 KIWI ꘡ ULTRA-FAST EDGE NETWORK INTELLIGENCE [v1.0.0]\x1b[0m\n");
+                buffer.push_str(
+                    "\x1b[1;32m🥝 KIWI ꘡ ULTRA-FAST EDGE NETWORK INTELLIGENCE [v1.0.0]\x1b[0m\n",
+                );
                 line_count += 1;
 
                 // Line 2: Separator
@@ -75,7 +79,11 @@ impl TerminalRenderer {
 
                 // Line 3: Route & Proto
                 let client_desc = if !state.edge_telemetry.client_ip.is_empty() {
-                    let asn = state.edge_telemetry.asn.map(|a| format!("AS{}", a)).unwrap_or_default();
+                    let asn = state
+                        .edge_telemetry
+                        .asn
+                        .map(|a| format!("AS{}", a))
+                        .unwrap_or_default();
                     format!("{} {}", asn, state.edge_telemetry.city)
                 } else {
                     "Client Edge Route".to_string()
@@ -114,7 +122,8 @@ impl TerminalRenderer {
 
                 // Line 6 & 7: Speed + Braille Waveform
                 let braille_width = 36.min(width.saturating_sub(44));
-                let (top_wave, bot_wave) = render_braille_canvas(&state.throughput_history, braille_width);
+                let (top_wave, bot_wave) =
+                    render_braille_canvas(&state.throughput_history, braille_width);
 
                 let dir_symbol = match state.phase {
                     TestPhase::Download => "\x1b[36m▲\x1b[0m",
@@ -158,19 +167,26 @@ impl TerminalRenderer {
                 line_count += 1;
 
                 let idle_desc = match &state.idle_stats {
-                    Some(s) => format!("{:.1} ms  (Jitter: ±{:.1} ms · Loss: {:.1}%)", s.median_ms, s.jitter_ms, s.packet_loss_pct),
+                    Some(s) => format!(
+                        "{:.1} ms  (Jitter: ±{:.1} ms · Loss: {:.1}%)",
+                        s.median_ms, s.jitter_ms, s.packet_loss_pct
+                    ),
                     None => "Probing...".to_string(),
                 };
                 buffer.push_str(&format!("  Baseline (Idle) Ping  :  {}\n", idle_desc));
                 line_count += 1;
 
-                let (loaded_desc, grade_desc) = match (state.live_loaded_ping_ms, &state.idle_stats) {
+                let (loaded_desc, grade_desc) = match (state.live_loaded_ping_ms, &state.idle_stats)
+                {
                     (Some(loaded), Some(idle)) => {
                         let delta = (loaded - idle.median_ms).max(0.0);
                         let grade = BufferbloatGrade::compute(idle.median_ms, loaded, None);
                         (
                             format!("{:.1} ms  [ +{:.1} ms Bufferbloat Delta ]", loaded, delta),
-                            format!("{:>5} RPM  ──►  [ GRADE {} : {} ]", grade.rpm, grade.grade, grade.rating_label),
+                            format!(
+                                "{:>5} RPM  ──►  [ GRADE {} : {} ]",
+                                grade.rpm, grade.grade, grade.rating_label
+                            ),
                         )
                     }
                     _ => ("Pending...".to_string(), "Computing...".to_string()),
@@ -210,17 +226,34 @@ impl TerminalRenderer {
 
                 let scale = calculate_gauge_scale(state.peak_mbps.max(state.current_mbps));
                 let gauge_bar = render_tachometer(state.current_mbps, scale, 30);
-                buffer.push_str(&format!("  {} {:.1}/{:.0} Mbps\n", gauge_bar, state.current_mbps, scale));
+                buffer.push_str(&format!(
+                    "  {} {:.1}/{:.0} Mbps\n",
+                    gauge_bar, state.current_mbps, scale
+                ));
                 line_count += 1;
 
-                let idle_str = state.idle_stats.as_ref().map(|s| format!("{:.1}ms", s.median_ms)).unwrap_or_else(|| "--".to_string());
-                let working_str = state.live_loaded_ping_ms.map(|p| format!("{:.1}ms", p)).unwrap_or_else(|| "--".to_string());
-                buffer.push_str(&format!("  Idle: {} │ Loaded: {} │ Streams: {}\n", idle_str, working_str, state.active_streams));
+                let idle_str = state
+                    .idle_stats
+                    .as_ref()
+                    .map(|s| format!("{:.1}ms", s.median_ms))
+                    .unwrap_or_else(|| "--".to_string());
+                let working_str = state
+                    .live_loaded_ping_ms
+                    .map(|p| format!("{:.1}ms", p))
+                    .unwrap_or_else(|| "--".to_string());
+                buffer.push_str(&format!(
+                    "  Idle: {} │ Loaded: {} │ Streams: {}\n",
+                    idle_str, working_str, state.active_streams
+                ));
                 line_count += 1;
 
                 buffer.push_str(&format!(
                     "  Colo: {} │ RSS: {:.1} MB │ {}\n",
-                    if state.edge_telemetry.colo.is_empty() { "Edge" } else { &state.edge_telemetry.colo },
+                    if state.edge_telemetry.colo.is_empty() {
+                        "Edge"
+                    } else {
+                        &state.edge_telemetry.colo
+                    },
                     ResourceProfile::current_rss_mb(),
                     state.protocol_desc
                 ));
@@ -234,7 +267,10 @@ impl TerminalRenderer {
                     _ => "Init".to_string(),
                 };
                 let ping = state.live_loaded_ping_ms.unwrap_or(0.0);
-                buffer.push_str(&format!("🥝 [{}] [Ping: {:.1}ms] [Streams: {}]\n", p_str, ping, state.active_streams));
+                buffer.push_str(&format!(
+                    "🥝 [{}] [Ping: {:.1}ms] [Streams: {}]\n",
+                    p_str, ping, state.active_streams
+                ));
                 line_count += 1;
             }
         }

@@ -36,8 +36,24 @@ pub use generic::*;
 /// Determine if an interface is virtual across platforms (bridges, containers, tunnels, VPNs)
 pub fn is_virtual_interface(name: &str) -> bool {
     let prefixes = [
-        "veth", "docker", "br-", "tun", "tap", "wg", "tailscale", "dummy", "virbr", "cni", "flannel",
-        "kube", "podman", "utun", "bridge", "p2p", "awdl", "llw",
+        "veth",
+        "docker",
+        "br-",
+        "tun",
+        "tap",
+        "wg",
+        "tailscale",
+        "dummy",
+        "virbr",
+        "cni",
+        "flannel",
+        "kube",
+        "podman",
+        "utun",
+        "bridge",
+        "p2p",
+        "awdl",
+        "llw",
     ];
     let lower = name.to_lowercase();
     prefixes.iter().any(|prefix| lower.starts_with(prefix))

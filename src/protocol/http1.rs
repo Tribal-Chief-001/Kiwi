@@ -1,9 +1,9 @@
 use crate::metrics::EdgeTelemetry;
 use crate::protocol::telemetry::parse_edge_telemetry;
-use crate::protocol::{ProbePendingGuard, PROBE_TIMEOUT};
+use crate::protocol::{PROBE_TIMEOUT, ProbePendingGuard};
 use http::HeaderMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;

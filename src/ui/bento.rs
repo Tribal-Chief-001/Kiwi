@@ -22,21 +22,31 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     };
     out.push_str(&format!(
         "  \x1b[1mClient\x1b[0m       : {}{}{}\n",
-        if report.edge.client_ip.is_empty() { "Local Host" } else { &report.edge.client_ip },
+        if report.edge.client_ip.is_empty() {
+            "Local Host"
+        } else {
+            &report.edge.client_ip
+        },
         client_asn,
         client_loc
     ));
 
     // Edge node line
     let colo_str = if !report.edge.colo.is_empty() {
-        format!("Anycast Fleet [{} Colocation · {}, {}]", report.edge.colo, report.edge.city, report.edge.country)
+        format!(
+            "Anycast Fleet [{} Colocation · {}, {}]",
+            report.edge.colo, report.edge.city, report.edge.country
+        )
     } else {
         report.target_host.clone()
     };
     out.push_str(&format!("  \x1b[1mEdge Node\x1b[0m    : {}\n", colo_str));
 
     // Transport line
-    out.push_str(&format!("  \x1b[1mTransport\x1b[0m    : {}\n", report.protocol));
+    out.push_str(&format!(
+        "  \x1b[1mTransport\x1b[0m    : {}\n",
+        report.protocol
+    ));
 
     out.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", single_border));
 
@@ -96,21 +106,34 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     };
     out.push_str(&format!(
         "  \x1b[1mServer Telemetry\x1b[0m   : {} Anycast Edge{}{}\n",
-        if report.edge.colo.is_empty() { "Cloudflare" } else { &report.edge.colo },
+        if report.edge.colo.is_empty() {
+            "Cloudflare"
+        } else {
+            &report.edge.colo
+        },
         cwnd_str,
         retrans_str
     ));
 
     // PHY Link Telemetry
     let link_desc = match report.platform.link_speed_mbps {
-        Some(s) => format!("{} ({} Mbps {})", report.platform.interface_name, s, report.platform.link_type),
-        None => format!("{} ({})", report.platform.interface_name, report.platform.link_type),
+        Some(s) => format!(
+            "{} ({} Mbps {})",
+            report.platform.interface_name, s, report.platform.link_type
+        ),
+        None => format!(
+            "{} ({})",
+            report.platform.interface_name, report.platform.link_type
+        ),
     };
     let warning_note = match &report.platform.bottleneck_warning {
         Some(w) => format!(" — \x1b[33m{}\x1b[0m", w),
         None => " — Local link capacity nominal".to_string(),
     };
-    out.push_str(&format!("  \x1b[1mPHY Link Telemetry\x1b[0m : {}{}\n", link_desc, warning_note));
+    out.push_str(&format!(
+        "  \x1b[1mPHY Link Telemetry\x1b[0m : {}{}\n",
+        link_desc, warning_note
+    ));
 
     // Resource Profile
     out.push_str(&format!(

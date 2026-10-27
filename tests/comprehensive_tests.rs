@@ -2,7 +2,8 @@ use clap::Parser;
 use http::{HeaderMap, HeaderValue};
 use kiwi::cli::Cli;
 use kiwi::metrics::{
-    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, PlatformInfo, ResourceProfile, ThroughputStats,
+    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, PlatformInfo, ResourceProfile,
+    ThroughputStats,
 };
 use kiwi::platform::{is_virtual_interface, is_wireless_interface};
 use kiwi::protocol::telemetry::parse_edge_telemetry;
@@ -105,7 +106,10 @@ fn test_edge_telemetry_parser() {
     headers.insert("asn", HeaderValue::from_static("55836"));
     headers.insert("city", HeaderValue::from_static("Bhopal"));
     headers.insert("country", HeaderValue::from_static("IN"));
-    headers.insert("cf-meta-ip", HeaderValue::from_static("2409:40c4:19:8727::1"));
+    headers.insert(
+        "cf-meta-ip",
+        HeaderValue::from_static("2409:40c4:19:8727::1"),
+    );
     headers.insert(
         "server-timing",
         HeaderValue::from_static(
@@ -136,12 +140,18 @@ fn test_braille_canvas_and_tachometer() {
     assert!(top_empty.chars().all(|c| c == ' '));
 
     // Braille canvas with varying throughput waveform
-    let history = vec![10.0, 50.0, 100.0, 300.0, 550.0, 400.0, 200.0, 100.0, 50.0, 10.0];
+    let history = vec![
+        10.0, 50.0, 100.0, 300.0, 550.0, 400.0, 200.0, 100.0, 50.0, 10.0,
+    ];
     let (top_wave, bot_wave) = render_braille_canvas(&history, 15);
     assert_eq!(top_wave.chars().count(), 15);
     assert_eq!(bot_wave.chars().count(), 15);
     // Must contain braille pattern symbols
-    assert!(bot_wave.chars().any(|c| (c as u32) >= 0x2800 && (c as u32) <= 0x28FF));
+    assert!(
+        bot_wave
+            .chars()
+            .any(|c| (c as u32) >= 0x2800 && (c as u32) <= 0x28FF)
+    );
 
     // Tachometer gauge
     let tacho_0 = render_tachometer(0.0, 100.0, 10);
@@ -292,25 +302,57 @@ fn test_probe_pending_guard_raii() {
 #[cfg(target_os = "linux")]
 #[test]
 fn test_linux_bottleneck_evaluation() {
-    use kiwi::platform::{evaluate_bottlenecks, WirelessStats};
+    use kiwi::platform::{WirelessStats, evaluate_bottlenecks};
 
     // 1. Half-duplex physical link
-    let half_dup = evaluate_bottlenecks(false, false, Some(1000), Some("half"), Some("up"), Some(1), None);
+    let half_dup = evaluate_bottlenecks(
+        false,
+        false,
+        Some(1000),
+        Some("half"),
+        Some("up"),
+        Some(1),
+        None,
+    );
     assert!(half_dup.is_some());
     assert!(half_dup.unwrap().contains("Half-duplex"));
 
     // 2. Degraded 100 Mbps Ethernet port
-    let degraded_100 = evaluate_bottlenecks(false, false, Some(100), Some("full"), Some("up"), Some(1), None);
+    let degraded_100 = evaluate_bottlenecks(
+        false,
+        false,
+        Some(100),
+        Some("full"),
+        Some("up"),
+        Some(1),
+        None,
+    );
     assert!(degraded_100.is_some());
     assert!(degraded_100.unwrap().contains("100 Mbps link detected"));
 
     // 3. Severe 10 Mbps Ethernet port
-    let severe_10 = evaluate_bottlenecks(false, false, Some(10), Some("full"), Some("up"), Some(1), None);
+    let severe_10 = evaluate_bottlenecks(
+        false,
+        false,
+        Some(10),
+        Some("full"),
+        Some("up"),
+        Some(1),
+        None,
+    );
     assert!(severe_10.is_some());
     assert!(severe_10.unwrap().contains("Severe 10 Mbps bottleneck"));
 
     // 4. Physical carrier lost
-    let carrier_lost = evaluate_bottlenecks(false, false, Some(1000), Some("full"), Some("down"), Some(0), None);
+    let carrier_lost = evaluate_bottlenecks(
+        false,
+        false,
+        Some(1000),
+        Some("full"),
+        Some("down"),
+        Some(0),
+        None,
+    );
     assert!(carrier_lost.is_some());
     assert!(carrier_lost.unwrap().contains("carrier signal lost"));
 
@@ -331,7 +373,15 @@ fn test_linux_bottleneck_evaluation() {
     assert!(weak_wifi.unwrap().contains("Weak Wi-Fi signal (-82 dBm)"));
 
     // 6. Healthy link (Gigabit Ethernet)
-    let healthy_eth = evaluate_bottlenecks(false, false, Some(1000), Some("full"), Some("up"), Some(1), None);
+    let healthy_eth = evaluate_bottlenecks(
+        false,
+        false,
+        Some(1000),
+        Some("full"),
+        Some("up"),
+        Some(1),
+        None,
+    );
     assert!(healthy_eth.is_none());
 
     // 7. Healthy Wi-Fi (-42 dBm, link quality 68/70)
@@ -390,7 +440,15 @@ fn test_linux_bottleneck_carrier_down_override() {
     use kiwi::platform::evaluate_bottlenecks;
 
     // Carrier signal present (1), but administrative state is explicitly 'down'
-    let warning = evaluate_bottlenecks(false, false, Some(1000), Some("full"), Some("down"), Some(1), None);
+    let warning = evaluate_bottlenecks(
+        false,
+        false,
+        Some(1000),
+        Some("full"),
+        Some("down"),
+        Some(1),
+        None,
+    );
     assert!(warning.is_some());
     assert!(warning.unwrap().contains("operational state is 'down'"));
 }
@@ -406,7 +464,10 @@ fn test_linux_default_route_ipv4_tie_break() {
     let mock_routes_virtual_tie = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
 docker0\t00000000\t010011AC\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
 eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
-    assert_eq!(parse_default_route_ipv4(mock_routes_virtual_tie), Some("eth0".to_string()));
+    assert_eq!(
+        parse_default_route_ipv4(mock_routes_virtual_tie),
+        Some("eth0".to_string())
+    );
 
     // 2. Dual-homed system with identical metric (100):
     // wlan0 (Wi-Fi) listed first, eth0 (Ethernet) listed second.
@@ -414,20 +475,29 @@ eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
     let mock_routes_wifi_tie = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
 wlan0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
 eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
-    assert_eq!(parse_default_route_ipv4(mock_routes_wifi_tie), Some("eth0".to_string()));
+    assert_eq!(
+        parse_default_route_ipv4(mock_routes_wifi_tie),
+        Some("eth0".to_string())
+    );
 
     // 3. Metric priority beats interface type:
     // wlan0 metric 50, eth0 metric 100 -> lower metric wlan0 wins!
     let mock_routes_metric_priority = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
 eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
 wlan0\t00000000\t0101A8C0\t0003\t0\t0\t50\t00000000\t0\t0\t0\n";
-    assert_eq!(parse_default_route_ipv4(mock_routes_metric_priority), Some("wlan0".to_string()));
+    assert_eq!(
+        parse_default_route_ipv4(mock_routes_metric_priority),
+        Some("wlan0".to_string())
+    );
 
     // 4. Inactive route (Flags = 0002 without RTF_UP 0x0001) must be ignored
     let mock_routes_down = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
 eth0\t00000000\t0101A8C0\t0000\t0\t0\t10\t00000000\t0\t0\t0\n\
 eth1\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
-    assert_eq!(parse_default_route_ipv4(mock_routes_down), Some("eth1".to_string()));
+    assert_eq!(
+        parse_default_route_ipv4(mock_routes_down),
+        Some("eth1".to_string())
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -440,11 +510,17 @@ fn test_linux_default_route_ipv6_tie_break_and_flags() {
     let mock_ipv6 = "\
 00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000001 00000000 08000003 docker0\n\
 00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000002 00000400 00000001 00000000 08000003 eth0\n";
-    assert_eq!(parse_default_route_ipv6(mock_ipv6), Some("eth0".to_string()));
+    assert_eq!(
+        parse_default_route_ipv6(mock_ipv6),
+        Some("eth0".to_string())
+    );
 
     // 2. Route with RTF_REJECT (0x0200) must be skipped even with metric 0
     let mock_ipv6_reject = "\
 00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000001 00000000 00200200 eth0\n\
 00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000002 00000400 00000001 00000000 08000003 eth1\n";
-    assert_eq!(parse_default_route_ipv6(mock_ipv6_reject), Some("eth1".to_string()));
+    assert_eq!(
+        parse_default_route_ipv6(mock_ipv6_reject),
+        Some("eth1".to_string())
+    );
 }

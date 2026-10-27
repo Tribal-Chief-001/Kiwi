@@ -26,7 +26,9 @@ pub fn parse_edge_telemetry(headers: &HeaderMap) -> EdgeTelemetry {
     }
 
     // Parse Country
-    if let Some(val) = headers.get("country").or_else(|| headers.get("cf-meta-country"))
+    if let Some(val) = headers
+        .get("country")
+        .or_else(|| headers.get("cf-meta-country"))
         && let Ok(s) = val.to_str()
     {
         telemetry.country = s.trim().to_string();
@@ -89,7 +91,10 @@ mod tests {
         headers.insert("asn", HeaderValue::from_static("55836"));
         headers.insert("city", HeaderValue::from_static("Mumbai"));
         headers.insert("country", HeaderValue::from_static("IN"));
-        headers.insert("cf-meta-ip", HeaderValue::from_static("2409:40c4:19:8727::1"));
+        headers.insert(
+            "cf-meta-ip",
+            HeaderValue::from_static("2409:40c4:19:8727::1"),
+        );
         headers.insert(
             "server-timing",
             HeaderValue::from_static(

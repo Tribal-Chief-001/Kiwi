@@ -20,7 +20,11 @@ pub fn detect_platform_info(specified_iface: Option<&str>) -> PlatformInfo {
     let duplex = read_link_duplex(&iface);
     let operstate = read_operstate(&iface);
     let carrier = read_carrier(&iface);
-    let wireless_stats = if is_wireless { read_wireless_stats(&iface) } else { None };
+    let wireless_stats = if is_wireless {
+        read_wireless_stats(&iface)
+    } else {
+        None
+    };
 
     let link_type = if is_virtual {
         "Virtual Overlay".to_string()
@@ -98,7 +102,10 @@ pub fn evaluate_bottlenecks(
         if let Some(d) = duplex
             && d.eq_ignore_ascii_case("half")
         {
-            warnings.push("Half-duplex link negotiation detected (collision domain / bad cable pair)".to_string());
+            warnings.push(
+                "Half-duplex link negotiation detected (collision domain / bad cable pair)"
+                    .to_string(),
+            );
         }
 
         if let Some(speed) = speed_mbps {
@@ -177,7 +184,10 @@ pub fn parse_default_route_ipv6(routes: &str) -> Option<String> {
         let fields: Vec<&str> = line.split_whitespace().collect();
         // Destination prefix is 32 hex chars (128 bits), followed by prefix length
         // Default route has destination 00000000000000000000000000000000 and prefix length 00
-        if fields.len() >= 10 && fields[0] == "00000000000000000000000000000000" && fields[1] == "00" {
+        if fields.len() >= 10
+            && fields[0] == "00000000000000000000000000000000"
+            && fields[1] == "00"
+        {
             let iface = fields[fields.len() - 1];
             if iface == "lo" {
                 continue;
@@ -262,12 +272,16 @@ pub fn read_link_speed(name: &str) -> Option<u64> {
 
 pub fn read_link_duplex(name: &str) -> Option<String> {
     let duplex_path = format!("/sys/class/net/{}/duplex", name);
-    fs::read_to_string(duplex_path).ok().map(|s| s.trim().to_string())
+    fs::read_to_string(duplex_path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 pub fn read_operstate(name: &str) -> Option<String> {
     let state_path = format!("/sys/class/net/{}/operstate", name);
-    fs::read_to_string(state_path).ok().map(|s| s.trim().to_lowercase())
+    fs::read_to_string(state_path)
+        .ok()
+        .map(|s| s.trim().to_lowercase())
 }
 
 pub fn read_carrier(name: &str) -> Option<u32> {
@@ -281,9 +295,9 @@ pub fn read_wireless_stats(name: &str) -> Option<WirelessStats> {
         if let Some((iface_part, stats_part)) = line.split_once(':')
             && iface_part.trim() == name
         {
-                let tokens: Vec<&str> = stats_part.split_whitespace().collect();
-                // tokens: [status, link_quality, signal_level, noise, ...]
-                // Example: ["0000", "68.", "-42.", "-256", ...]
+            let tokens: Vec<&str> = stats_part.split_whitespace().collect();
+            // tokens: [status, link_quality, signal_level, noise, ...]
+            // Example: ["0000", "68.", "-42.", "-256", ...]
             if tokens.len() >= 3 {
                 let quality = tokens[1].trim_end_matches('.').parse::<u32>().ok();
                 let level = tokens[2].trim_end_matches('.').parse::<i32>().ok();

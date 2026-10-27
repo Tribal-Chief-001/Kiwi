@@ -188,7 +188,10 @@ fn test_platform_interface_classification() {
 
     assert!(is_wireless_interface("wlp0s20f3"));
     assert!(is_wireless_interface("wlan0"));
+    assert!(is_wireless_interface("Wi-Fi"));
+    assert!(is_wireless_interface("Wireless Network Connection"));
     assert!(!is_wireless_interface("lo"));
+    assert!(!is_wireless_interface("eth0"));
 }
 
 #[test]

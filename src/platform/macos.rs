@@ -22,7 +22,12 @@ pub fn detect_platform_info(specified_iface: Option<&str>) -> PlatformInfo {
 }
 
 pub fn is_wireless_interface(name: &str) -> bool {
-    name.starts_with("en0") || name.starts_with("wl")
+    let lower = name.to_lowercase();
+    name.starts_with("en0")
+        || lower.starts_with("wl")
+        || lower.contains("wi-fi")
+        || lower.contains("wireless")
+        || lower.contains("wlan")
 }
 
 pub fn apply_socket_optimizations<S: AsRawFd>(socket: &S, _specified_iface: Option<&str>) {

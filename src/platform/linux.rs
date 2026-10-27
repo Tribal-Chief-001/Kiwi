@@ -256,7 +256,11 @@ pub fn is_wireless_interface(name: &str) -> bool {
     {
         return true;
     }
-    name.starts_with("wl")
+    let lower = name.to_lowercase();
+    lower.starts_with("wl")
+        || lower.contains("wi-fi")
+        || lower.contains("wireless")
+        || lower.contains("wlan")
 }
 
 pub fn read_link_speed(name: &str) -> Option<u64> {

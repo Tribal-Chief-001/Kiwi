@@ -26,7 +26,11 @@ pub mod generic {
         }
     }
     pub fn is_wireless_interface(name: &str) -> bool {
-        name.starts_with("wl")
+        let lower = name.to_lowercase();
+        lower.starts_with("wl")
+            || lower.contains("wi-fi")
+            || lower.contains("wireless")
+            || lower.contains("wlan")
     }
     pub fn apply_socket_optimizations<S>(_socket: &S, _specified_iface: Option<&str>) {}
 }

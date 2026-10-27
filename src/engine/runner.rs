@@ -140,6 +140,24 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     }
 
     // 8. Phase 3: Saturated In-Band Upload Test
+    // Verify client connection health before upload phase, re-establishing if closed
+    let client_healthy = match &mut client {
+        ClientHandle::H2(h2) => h2.send_request.clone().ready().await.is_ok(),
+        ClientHandle::Http1(_) => true,
+    };
+    if !client_healthy
+        && let Ok(conn) = connect_happy_eyeballs(&cli.host, &candidates, cli.interface.as_deref()).await
+    {
+        let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
+        if is_h2 {
+            if let Ok(new_h2) = H2Client::new(conn.tls_stream, cli.host.clone()).await {
+                client = ClientHandle::H2(new_h2);
+            }
+        } else {
+            client = ClientHandle::Http1(Box::new(Http1Client::new(conn.tls_stream, cli.host.clone())));
+        }
+    }
+
     ui_state.phase = TestPhase::Upload;
     ui_state.active_streams = cli.streams;
     ui_state.throughput_history.clear();
@@ -387,7 +405,7 @@ async fn run_phase_saturation(
     let attempted_probes = Arc::new(AtomicU64::new(0));
     let attempted_counter = attempted_probes.clone();
 
-    let probe_handle = match client {
+    let mut probe_handle = match client {
         ClientHandle::H2(h2) => {
             let mut probe_client = H2Client {
                 send_request: h2.send_request.clone(),
@@ -426,23 +444,34 @@ async fn run_phase_saturation(
             let candidates_probe = config.candidates.clone();
             let iface_probe = config.specified_iface.map(|s| s.to_string());
             tokio::spawn(async move {
-                if let Ok(conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await {
-                    let mut h1_probe = Http1Client::new(conn.tls_stream, host_probe.clone());
-                    while !probe_stop.load(Ordering::Relaxed) {
-                        sleep(Duration::from_millis(150)).await;
-                        if probe_stop.load(Ordering::Relaxed) {
-                            break;
+                let mut h1_probe_opt: Option<Http1Client> = None;
+                while !probe_stop.load(Ordering::Relaxed) {
+                    sleep(Duration::from_millis(150)).await;
+                    if probe_stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if h1_probe_opt.is_none() {
+                        if let Ok(conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await {
+                            h1_probe_opt = Some(Http1Client::new(conn.tls_stream, host_probe.clone()));
+                        } else {
+                            attempted_counter.fetch_add(1, Ordering::Relaxed);
+                            continue;
                         }
+                    }
+
+                    if let Some(mut h1) = h1_probe_opt.take() {
                         attempted_counter.fetch_add(1, Ordering::Relaxed);
-                        match h1_probe.dispatch_probe(&probe_flag).await {
+                        match h1.dispatch_probe(&probe_flag).await {
                             Ok((rtt, _)) => {
                                 let mut guard = probe_samples_target.lock().await;
                                 guard.push(rtt);
+                                h1_probe_opt = Some(h1);
                             }
                             Err(_) => {
-                                // If HTTP/1.1 socket dropped or desynchronized under loss, reconnect
+                                // Dead or desynchronized socket is dropped immediately.
+                                // Attempt reconnect for subsequent probes.
                                 if let Ok(new_conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await {
-                                    h1_probe = Http1Client::new(new_conn.tls_stream, host_probe.clone());
+                                    h1_probe_opt = Some(Http1Client::new(new_conn.tls_stream, host_probe.clone()));
                                 }
                             }
                         }
@@ -501,12 +530,17 @@ async fn run_phase_saturation(
         }
     }
 
-    // Stop all workers with timeout safety guards
+    // Stop all workers with timeout safety guards and explicit task abort to prevent task leakage
     stop_signal.store(true, Ordering::Release);
-    let _ = tokio::time::timeout(Duration::from_millis(800), probe_handle).await;
-    for h in stream_handles {
-        let _ = tokio::time::timeout(Duration::from_millis(800), h).await;
+    if tokio::time::timeout(Duration::from_millis(800), &mut probe_handle).await.is_err() {
+        probe_handle.abort();
     }
+    for mut h in stream_handles {
+        if tokio::time::timeout(Duration::from_millis(800), &mut h).await.is_err() {
+            h.abort();
+        }
+    }
+    config.probe_pending.store(false, Ordering::Release);
 
     let total_transferred = total_bytes.load(Ordering::Relaxed);
     let total_secs = phase_start.elapsed().as_secs_f64();

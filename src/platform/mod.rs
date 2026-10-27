@@ -25,7 +25,23 @@ pub mod generic {
             bottleneck_warning: None,
         }
     }
+    pub fn is_wireless_interface(name: &str) -> bool {
+        name.starts_with("wl")
+    }
     pub fn apply_socket_optimizations<S>(_socket: &S, _specified_iface: Option<&str>) {}
 }
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use generic::*;
+
+/// Determine if an interface is virtual across platforms (bridges, containers, tunnels, VPNs)
+pub fn is_virtual_interface(name: &str) -> bool {
+    let prefixes = [
+        "veth", "docker", "br-", "tun", "tap", "wg", "tailscale", "dummy", "virbr", "cni", "flannel",
+        "kube", "podman", "utun", "bridge", "p2p", "awdl", "llw",
+    ];
+    let lower = name.to_lowercase();
+    prefixes.iter().any(|prefix| lower.starts_with(prefix))
+        || lower.contains("virtual")
+        || lower.contains("loopback")
+        || lower.contains("vethernet")
+}

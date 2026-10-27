@@ -357,6 +357,8 @@ fn test_extended_virtual_interface_prefixes() {
     assert!(is_virtual_interface("flannel.1"));
     assert!(is_virtual_interface("kube-bridge"));
     assert!(is_virtual_interface("podman0"));
+    assert!(is_virtual_interface("utun3"));
+    assert!(is_virtual_interface("vEthernet (WSL)"));
 }
 
 #[test]
@@ -366,4 +368,83 @@ fn test_loaded_packet_loss_calculation() {
     let stats = LatencyStats::calculate(samples, 10);
     assert_eq!(stats.samples.len(), 8);
     assert!((stats.packet_loss_pct - 20.0).abs() < 1e-4);
+}
+
+#[test]
+fn test_latency_stats_underflow_and_zero_probes_edge_cases() {
+    // 1. total_probes < samples.len() (must not overflow/panic)
+    let samples = vec![20.0, 22.0, 21.0];
+    let stats = LatencyStats::calculate(samples, 2);
+    assert_eq!(stats.packet_loss_pct, 0.0);
+    assert_eq!(stats.samples.len(), 3);
+
+    // 2. total_probes == 0 with empty samples (must report 0.0% loss without division by zero/overflow)
+    let empty_zero = LatencyStats::calculate(vec![], 0);
+    assert_eq!(empty_zero.packet_loss_pct, 0.0);
+    assert_eq!(empty_zero.min_ms, 0.0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_linux_bottleneck_carrier_down_override() {
+    use kiwi::platform::evaluate_bottlenecks;
+
+    // Carrier signal present (1), but administrative state is explicitly 'down'
+    let warning = evaluate_bottlenecks(false, false, Some(1000), Some("full"), Some("down"), Some(1), None);
+    assert!(warning.is_some());
+    assert!(warning.unwrap().contains("operational state is 'down'"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_linux_default_route_ipv4_tie_break() {
+    use kiwi::platform::parse_default_route_ipv4;
+
+    // 1. Dual-homed system with identical metric (100):
+    // docker0 (virtual bridge) listed first, eth0 (physical Gigabit) listed second.
+    // parse_default_route_ipv4 must select physical eth0 over virtual docker0!
+    let mock_routes_virtual_tie = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
+docker0\t00000000\t010011AC\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
+eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+    assert_eq!(parse_default_route_ipv4(mock_routes_virtual_tie), Some("eth0".to_string()));
+
+    // 2. Dual-homed system with identical metric (100):
+    // wlan0 (Wi-Fi) listed first, eth0 (Ethernet) listed second.
+    // Wired physical Ethernet must be prioritized over Wi-Fi when metrics tie!
+    let mock_routes_wifi_tie = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
+wlan0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
+eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+    assert_eq!(parse_default_route_ipv4(mock_routes_wifi_tie), Some("eth0".to_string()));
+
+    // 3. Metric priority beats interface type:
+    // wlan0 metric 50, eth0 metric 100 -> lower metric wlan0 wins!
+    let mock_routes_metric_priority = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
+eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
+wlan0\t00000000\t0101A8C0\t0003\t0\t0\t50\t00000000\t0\t0\t0\n";
+    assert_eq!(parse_default_route_ipv4(mock_routes_metric_priority), Some("wlan0".to_string()));
+
+    // 4. Inactive route (Flags = 0002 without RTF_UP 0x0001) must be ignored
+    let mock_routes_down = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n\
+eth0\t00000000\t0101A8C0\t0000\t0\t0\t10\t00000000\t0\t0\t0\n\
+eth1\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n";
+    assert_eq!(parse_default_route_ipv4(mock_routes_down), Some("eth1".to_string()));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_linux_default_route_ipv6_tie_break_and_flags() {
+    use kiwi::platform::parse_default_route_ipv6;
+
+    // 1. Dual-homed IPv6 default routes with identical metric:
+    // docker0 listed first, eth0 listed second -> eth0 wins!
+    let mock_ipv6 = "\
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000001 00000000 08000003 docker0\n\
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000002 00000400 00000001 00000000 08000003 eth0\n";
+    assert_eq!(parse_default_route_ipv6(mock_ipv6), Some("eth0".to_string()));
+
+    // 2. Route with RTF_REJECT (0x0200) must be skipped even with metric 0
+    let mock_ipv6_reject = "\
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000000 00000001 00000000 00200200 eth0\n\
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000002 00000400 00000001 00000000 08000003 eth1\n";
+    assert_eq!(parse_default_route_ipv6(mock_ipv6_reject), Some("eth1".to_string()));
 }

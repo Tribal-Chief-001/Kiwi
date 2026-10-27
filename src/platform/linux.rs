@@ -62,11 +62,11 @@ pub fn evaluate_bottlenecks(
 ) -> Option<String> {
     let mut warnings = Vec::new();
 
-    // Check link carrier / state
-    if let Some(c) = carrier {
-        if c == 0 {
-            warnings.push("Physical carrier signal lost (port unplugged or link down)".to_string());
-        }
+    // Check link carrier / operational state
+    if let Some(c) = carrier
+        && c == 0
+    {
+        warnings.push("Physical carrier signal lost (port unplugged or link down)".to_string());
     } else if let Some(state) = operstate
         && (state == "down" || state == "lowerlayerdown")
     {
@@ -132,10 +132,9 @@ pub fn detect_default_interface() -> Option<String> {
     detect_first_up_interface()
 }
 
-pub fn detect_default_interface_ipv4() -> Option<String> {
-    let routes = fs::read_to_string("/proc/net/route").ok()?;
+pub fn parse_default_route_ipv4(routes: &str) -> Option<String> {
     let mut best_iface = None;
-    let mut best_metric = u32::MAX;
+    let mut best_priority = None;
 
     for line in routes.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -146,20 +145,33 @@ pub fn detect_default_interface_ipv4() -> Option<String> {
             if flags & 0x0001 == 0 {
                 continue;
             }
+            let iface = fields[0];
             let metric = fields[6].parse::<u32>().unwrap_or(u32::MAX);
-            if metric < best_metric {
-                best_metric = metric;
-                best_iface = Some(fields[0].to_string());
+            let is_virt = is_virtual_interface(iface);
+            let is_wifi = is_wireless_interface(iface);
+
+            // Priority tuple: (metric, is_virtual, is_wireless)
+            // 1. Lower metric wins
+            // 2. Physical interface wins over virtual bridge/overlay
+            // 3. Wired Ethernet wins over Wi-Fi
+            let priority = (metric, is_virt, is_wifi);
+            if best_priority.is_none() || Some(priority) < best_priority {
+                best_priority = Some(priority);
+                best_iface = Some(iface.to_string());
             }
         }
     }
     best_iface
 }
 
-pub fn detect_default_interface_ipv6() -> Option<String> {
-    let routes = fs::read_to_string("/proc/net/ipv6_route").ok()?;
+pub fn detect_default_interface_ipv4() -> Option<String> {
+    let routes = fs::read_to_string("/proc/net/route").ok()?;
+    parse_default_route_ipv4(&routes)
+}
+
+pub fn parse_default_route_ipv6(routes: &str) -> Option<String> {
     let mut best_iface = None;
-    let mut best_metric = u32::MAX;
+    let mut best_priority = None;
 
     for line in routes.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -170,14 +182,29 @@ pub fn detect_default_interface_ipv6() -> Option<String> {
             if iface == "lo" {
                 continue;
             }
+            // Check flags (fields[8] in hex): require RTF_UP (0x0001) and exclude RTF_REJECT (0x0200)
+            let flags = u32::from_str_radix(fields[8], 16).unwrap_or(0);
+            if flags & 0x0001 == 0 || flags & 0x0200 != 0 {
+                continue;
+            }
+
             let metric = u32::from_str_radix(fields[5], 16).unwrap_or(u32::MAX);
-            if metric < best_metric {
-                best_metric = metric;
+            let is_virt = is_virtual_interface(iface);
+            let is_wifi = is_wireless_interface(iface);
+
+            let priority = (metric, is_virt, is_wifi);
+            if best_priority.is_none() || Some(priority) < best_priority {
+                best_priority = Some(priority);
                 best_iface = Some(iface.to_string());
             }
         }
     }
     best_iface
+}
+
+pub fn detect_default_interface_ipv6() -> Option<String> {
+    let routes = fs::read_to_string("/proc/net/ipv6_route").ok()?;
+    parse_default_route_ipv6(&routes)
 }
 
 pub fn detect_first_up_interface() -> Option<String> {
@@ -199,17 +226,18 @@ pub fn detect_first_up_interface() -> Option<String> {
 }
 
 pub fn is_virtual_interface(name: &str) -> bool {
-    let prefixes = [
-        "veth", "docker", "br-", "tun", "tap", "wg", "tailscale", "dummy", "virbr", "cni", "flannel",
-        "kube", "podman",
-    ];
-    prefixes.iter().any(|prefix| name.starts_with(prefix))
+    super::is_virtual_interface(name)
 }
 
 pub fn is_wireless_interface(name: &str) -> bool {
     // Check sysfs wireless directory
     let sysfs_path = format!("/sys/class/net/{}/wireless", name);
     if fs::metadata(sysfs_path).is_ok() {
+        return true;
+    }
+    // Check sysfs phy80211 link (modern nl80211 devices without WEXT)
+    let phy_path = format!("/sys/class/net/{}/phy80211", name);
+    if fs::metadata(phy_path).is_ok() {
         return true;
     }
     // Check /proc/net/wireless

@@ -76,7 +76,10 @@ impl Http1Client {
             let to_read = remaining.min(sink.len() as u64) as usize;
             let n = self.stream.read(&mut sink[..to_read]).await?;
             if n == 0 {
-                break;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "Socket closed prematurely while reading probe response body",
+                ));
             }
             remaining -= n as u64;
         }

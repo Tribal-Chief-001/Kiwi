@@ -29,13 +29,13 @@ impl LatencyStats {
     pub fn calculate(mut samples: Vec<f64>, total_probes: usize) -> Self {
         if samples.is_empty() {
             return Self {
-                packet_loss_pct: 100.0,
+                packet_loss_pct: if total_probes > 0 { 100.0 } else { 0.0 },
                 ..Default::default()
             };
         }
 
         let packet_loss_pct = if total_probes > 0 {
-            ((total_probes - samples.len()) as f64 / total_probes as f64) * 100.0
+            (total_probes.saturating_sub(samples.len()) as f64 / total_probes as f64) * 100.0
         } else {
             0.0
         };

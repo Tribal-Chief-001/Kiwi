@@ -103,6 +103,108 @@ pub fn render_tachometer(current_mbps: f64, max_mbps: f64, bar_width: usize) -> 
     format!("[{}{}]", filled, unfilled)
 }
 
+/// Renders a dynamic Phosphor Oscilloscope canvas with fading gradient trails.
+/// Oldest throughput points on the left fade into Deep Void Violet,
+/// transitioning through Neon Magenta and Cyber Cyan, ending in a radiant Kiwi Emerald leading pulse.
+pub fn render_phosphor_canvas(history: &[f64], char_width: usize) -> (String, String) {
+    use crate::ui::art::{multi_lerp, CYBER_CYAN, DEEP_VIOLET, ICE_WHITE, KIWI_EMERALD, NEON_MAGENTA};
+
+    let (top_raw, bot_raw) = render_braille_canvas(history, char_width);
+    if char_width == 0 {
+        return (String::new(), String::new());
+    }
+
+    let stops = [
+        (0.0, DEEP_VIOLET),
+        (0.35, NEON_MAGENTA),
+        (0.70, CYBER_CYAN),
+        (0.95, KIWI_EMERALD),
+        (1.0, ICE_WHITE),
+    ];
+
+    let top_chars: Vec<char> = top_raw.chars().collect();
+    let bot_chars: Vec<char> = bot_raw.chars().collect();
+
+    let mut top_out = String::with_capacity(char_width * 20);
+    let mut bot_out = String::with_capacity(char_width * 20);
+
+    for c in 0..char_width {
+        let t = if char_width > 1 {
+            c as f64 / (char_width - 1) as f64
+        } else {
+            1.0
+        };
+        let rgb = multi_lerp(&stops, t);
+
+        let tch = top_chars.get(c).copied().unwrap_or(' ');
+        let bch = bot_chars.get(c).copied().unwrap_or(' ');
+
+        if c == char_width - 1 && tch != ' ' {
+            top_out.push_str(&format!("\x1b[1;38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, tch));
+        } else if tch != ' ' {
+            top_out.push_str(&format!("\x1b[38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, tch));
+        } else {
+            top_out.push(' ');
+        }
+
+        if c == char_width - 1 && bch != ' ' {
+            bot_out.push_str(&format!("\x1b[1;38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, bch));
+        } else if bch != ' ' {
+            bot_out.push_str(&format!("\x1b[38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, bch));
+        } else {
+            bot_out.push(' ');
+        }
+    }
+
+    top_out.push_str("\x1b[0m");
+    bot_out.push_str("\x1b[0m");
+
+    (top_out, bot_out)
+}
+
+/// Renders a TrueColor dynamic tachometer gauge with neon gradient fill:
+/// `[████████░░░░░░]`
+pub fn render_colored_tachometer(current_mbps: f64, max_mbps: f64, bar_width: usize) -> String {
+    use crate::ui::art::{multi_lerp, CYBER_CYAN, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA};
+
+    let ratio = if max_mbps > 0.0 {
+        (current_mbps / max_mbps).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    let filled_len = (ratio * bar_width as f64).round() as usize;
+    let unfilled_len = bar_width.saturating_sub(filled_len);
+
+    let stops = [
+        (0.0, CYBER_CYAN),
+        (0.5, KIWI_EMERALD),
+        (0.85, ELECTRIC_AMBER),
+        (1.0, NEON_MAGENTA),
+    ];
+
+    let mut out = String::with_capacity(bar_width * 20 + 20);
+    // Subtle slate bracket
+    out.push_str("\x1b[38;2;71;85;105m[\x1b[0m");
+
+    for i in 0..filled_len {
+        let t = if bar_width > 1 {
+            i as f64 / (bar_width - 1) as f64
+        } else {
+            0.5
+        };
+        let rgb = multi_lerp(&stops, t);
+        out.push_str(&format!("\x1b[38;2;{};{};{}m█\x1b[0m", rgb.0, rgb.1, rgb.2));
+    }
+
+    for _ in 0..unfilled_len {
+        out.push_str("\x1b[38;2;51;65;85m░\x1b[0m");
+    }
+
+    out.push_str("\x1b[38;2;71;85;105m]\x1b[0m");
+    out
+}
+
 /// Calculates an intuitive dynamic gauge upper scale (e.g. 100, 250, 500, 1000, 2500, 5000, 10000 Mbps)
 pub fn calculate_gauge_scale(peak_mbps: f64) -> f64 {
     let scales = [50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0];

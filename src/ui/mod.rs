@@ -1,3 +1,4 @@
+pub mod art;
 pub mod bento;
 pub mod braille;
 pub mod layout;
@@ -5,7 +6,13 @@ pub mod layout;
 use crate::metrics::{
     BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, ResourceProfile,
 };
-use crate::ui::braille::{calculate_gauge_scale, render_braille_canvas, render_tachometer};
+use crate::ui::art::{
+    box_bot, box_row, box_sep, box_top, color_bold, color_fg, BRIGHT_WHITE, CYBER_CYAN,
+    DIM_GRAY, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA,
+};
+use crate::ui::braille::{
+    calculate_gauge_scale, render_colored_tachometer, render_phosphor_canvas,
+};
 use crate::ui::layout::{LayoutMode, TerminalLayout};
 use std::io::Write;
 
@@ -58,26 +65,25 @@ impl TerminalRenderer {
         }
 
         let layout = TerminalLayout::current(self.low_bandwidth);
-        let mut buffer = String::new();
+        let mut buffer = String::with_capacity(2048);
         let mut line_count = 0;
 
         match layout.mode {
             LayoutMode::Full => {
                 let term_cols = layout.cols as usize;
-                let width = term_cols.clamp(80, 86);
-                let sep = "─".repeat(width);
+                let width = term_cols.clamp(74, 82);
 
-                // Line 1: Header
-                buffer.push_str(
-                    "\x1b[1;32m🥝 KIWI ꘡ ULTRA-FAST EDGE NETWORK INTELLIGENCE [v1.0.0]\x1b[0m\n",
+                // Line 1: Header Top Border
+                let brand = format!(
+                    "🥝 {}  {}",
+                    color_bold("KIWI", KIWI_EMERALD),
+                    color_fg("꘡ EDGE NETWORK INTELLIGENCE [v1.0.0]", CYBER_CYAN)
                 );
+                buffer.push_str(&box_top(&brand, width));
+                buffer.push('\n');
                 line_count += 1;
 
-                // Line 2: Separator
-                buffer.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", sep));
-                line_count += 1;
-
-                // Line 3: Route & Proto
+                // Line 2: Route & Proto
                 let client_desc = if !state.edge_telemetry.client_ip.is_empty() {
                     let asn = state
                         .edge_telemetry
@@ -86,130 +92,179 @@ impl TerminalRenderer {
                         .unwrap_or_default();
                     format!("{} {}", asn, state.edge_telemetry.city)
                 } else {
-                    "Client Edge Route".to_string()
+                    "Client Route".to_string()
                 };
                 let edge_desc = if !state.edge_telemetry.colo.is_empty() {
-                    format!("{} Anycast Edge", state.edge_telemetry.colo)
+                    format!("{} Edge", state.edge_telemetry.colo)
                 } else {
-                    "Cloudflare Fleet".to_string()
+                    "Cloudflare Anycast".to_string()
                 };
-                buffer.push_str(&format!(
-                    "  \x1b[1mROUTE\x1b[0m: {} ──► {} │ \x1b[1mPROTO\x1b[0m: {}\n",
-                    client_desc.trim(),
-                    edge_desc,
-                    state.protocol_desc
-                ));
+                let route_str = format!(
+                    "{} {} ──► {} │ {}",
+                    color_fg("ROUTE:", DIM_GRAY),
+                    color_bold(client_desc.trim(), BRIGHT_WHITE),
+                    color_bold(&edge_desc, KIWI_EMERALD),
+                    color_fg(&state.protocol_desc, DIM_GRAY),
+                );
+                buffer.push_str(&box_row(&route_str, width));
+                buffer.push('\n');
                 line_count += 1;
 
-                // Line 4: Separator
-                buffer.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", sep));
+                // Line 3: Separator
+                buffer.push_str(&box_sep(width));
+                buffer.push('\n');
                 line_count += 1;
 
-                // Line 5: Section Title
-                let phase_title = match state.phase {
-                    TestPhase::Warmup => "CONNECTING & WARMING UP...",
-                    TestPhase::IdleLatency => "MEASURING BASELINE IDLE LATENCY...",
-                    TestPhase::Download => "DOWNLOAD THROUGHPUT",
-                    TestPhase::Upload => "UPLOAD THROUGHPUT",
-                    TestPhase::Complete => "BENCHMARK FINISHING...",
+                // Line 4: Section Title & Direction Pulse
+                let (phase_title, phase_color) = match state.phase {
+                    TestPhase::Warmup => ("CONNECTING & WARMING UP...", CYBER_CYAN),
+                    TestPhase::IdleLatency => ("MEASURING BASELINE IDLE LATENCY...", ELECTRIC_AMBER),
+                    TestPhase::Download => ("SATURATED DOWNLOAD THROUGHPUT", CYBER_CYAN),
+                    TestPhase::Upload => ("SATURATED UPLOAD THROUGHPUT", NEON_MAGENTA),
+                    TestPhase::Complete => ("BENCHMARK FINALIZING...", KIWI_EMERALD),
                 };
                 let fps_str = if layout.is_ssh { "10 FPS" } else { "20 FPS" };
-                buffer.push_str(&format!(
-                    "  \x1b[1m{:<40} REAL-TIME VELOCITY WAVEFORM ({})\x1b[0m\n",
-                    phase_title, fps_str
-                ));
-                line_count += 1;
-
-                // Line 6 & 7: Speed + Braille Waveform
-                let braille_width = 36.min(width.saturating_sub(44));
-                let (top_wave, bot_wave) =
-                    render_braille_canvas(&state.throughput_history, braille_width);
-
                 let dir_symbol = match state.phase {
-                    TestPhase::Download => "\x1b[36m▲\x1b[0m",
-                    TestPhase::Upload => "\x1b[35m▼\x1b[0m",
-                    _ => "\x1b[33m•\x1b[0m",
+                    TestPhase::Download => "▲",
+                    TestPhase::Upload => "▼",
+                    _ => "⚡",
                 };
-                buffer.push_str(&format!(
-                    "  {} \x1b[1m{:>6.1} Mbps\x1b[0m                            \x1b[36m{}\x1b[0m\n",
-                    dir_symbol, state.current_mbps, top_wave
-                ));
+                let title_line = format!(
+                    "{} {}  {}",
+                    color_bold(dir_symbol, phase_color),
+                    color_bold(phase_title, BRIGHT_WHITE),
+                    color_fg(&format!("({} LIVE)", fps_str), DIM_GRAY),
+                );
+                buffer.push_str(&box_row(&title_line, width));
+                buffer.push('\n');
                 line_count += 1;
 
+                // Line 5 & 6: Speed + Phosphor Oscilloscope Waveform
+                let braille_width = 28.min(width.saturating_sub(44));
+                let (top_wave, bot_wave) =
+                    render_phosphor_canvas(&state.throughput_history, braille_width);
+
+                let speed_badge = format!(
+                    "{} {}",
+                    color_bold(&format!("{:>6.1} Mbps", state.current_mbps), phase_color),
+                    color_fg(&format!("(Peak: {:>5.1})", state.peak_mbps), DIM_GRAY),
+                );
                 let transferred_mb = state.total_bytes as f64 / (1024.0 * 1024.0);
-                buffer.push_str(&format!(
-                    "  Peak: {:.1} Mbps · Transferred: {:.1} MB      \x1b[36m{}\x1b[0m\n",
-                    state.peak_mbps, transferred_mb, bot_wave
-                ));
-                line_count += 1;
+                let transferred_str = format!("Transferred: {:>5.1} MB", transferred_mb);
 
-                // Line 8: Empty
+                let wave_row_1 = format!("{:<38}  {}", speed_badge, top_wave);
+                buffer.push_str(&box_row(&wave_row_1, width));
                 buffer.push('\n');
                 line_count += 1;
 
-                // Line 9 & 10: Tachometer
+                let wave_row_2 =
+                    format!("{:<38}  {}", color_fg(&transferred_str, DIM_GRAY), bot_wave);
+                buffer.push_str(&box_row(&wave_row_2, width));
+                buffer.push('\n');
+                line_count += 1;
+
+                // Line 7: Dynamic Tachometer Gauge
                 let scale = calculate_gauge_scale(state.peak_mbps.max(state.current_mbps));
-                let gauge_bar = render_tachometer(state.current_mbps, scale, 42);
-                buffer.push_str("  \x1b[1mDYNAMIC TACHOMETER GAUGE:\x1b[0m\n");
-                line_count += 1;
-                buffer.push_str(&format!(
-                    "  \x1b[32m{}\x1b[0m  {:.1} / {:.0} Mbps\n",
-                    gauge_bar, state.current_mbps, scale
-                ));
-                line_count += 1;
-
-                // Line 11: Empty
+                let gauge_bar = render_colored_tachometer(state.current_mbps, scale, 34);
+                let tacho_line = format!(
+                    "{} {}  {:.1} / {:.0} Mbps",
+                    color_fg("GAUGE:", DIM_GRAY),
+                    gauge_bar,
+                    state.current_mbps,
+                    scale
+                );
+                buffer.push_str(&box_row(&tacho_line, width));
                 buffer.push('\n');
                 line_count += 1;
 
-                // Line 12..15: Bufferbloat Monitor
-                buffer.push_str("  \x1b[1mIETF RESPONSIVENESS & BUFFERBLOAT MONITOR:\x1b[0m\n");
+                // Line 8: Separator
+                buffer.push_str(&box_sep(width));
+                buffer.push('\n');
                 line_count += 1;
 
+                // Line 9: Baseline Idle Ping
                 let idle_desc = match &state.idle_stats {
                     Some(s) => format!(
-                        "{:.1} ms  (Jitter: ±{:.1} ms · Loss: {:.1}%)",
-                        s.median_ms, s.jitter_ms, s.packet_loss_pct
+                        "{} (Jitter: ±{:.1} ms · Loss: {:.1}%)",
+                        color_bold(&format!("{:.1} ms", s.median_ms), ELECTRIC_AMBER),
+                        s.jitter_ms,
+                        s.packet_loss_pct
                     ),
-                    None => "Probing...".to_string(),
+                    None => color_fg("Probing active...", DIM_GRAY),
                 };
-                buffer.push_str(&format!("  Baseline (Idle) Ping  :  {}\n", idle_desc));
-                line_count += 1;
-
-                let (loaded_desc, grade_desc) = match (state.live_loaded_ping_ms, &state.idle_stats)
-                {
-                    (Some(loaded), Some(idle)) => {
-                        let delta = (loaded - idle.median_ms).max(0.0);
-                        let grade = BufferbloatGrade::compute(idle.median_ms, loaded, None);
-                        (
-                            format!("{:.1} ms  [ +{:.1} ms Bufferbloat Delta ]", loaded, delta),
-                            format!(
-                                "{:>5} RPM  ──►  [ GRADE {} : {} ]",
-                                grade.rpm, grade.grade, grade.rating_label
-                            ),
-                        )
-                    }
-                    _ => ("Pending...".to_string(), "Computing...".to_string()),
-                };
-                buffer.push_str(&format!("  Working (Loaded) Ping :  {}\n", loaded_desc));
-                line_count += 1;
-                buffer.push_str(&format!("  Responsiveness Score  :  {}\n", grade_desc));
-                line_count += 1;
-
-                // Line 16: Empty
+                let idle_line =
+                    format!("{}  {}", color_fg("Baseline (Idle) Ping  ·", DIM_GRAY), idle_desc);
+                buffer.push_str(&box_row(&idle_line, width));
                 buffer.push('\n');
                 line_count += 1;
 
-                // Line 17: Footer
+                // Line 10: Working (Loaded) Ping
+                let (loaded_desc, grade_desc) =
+                    match (state.live_loaded_ping_ms, &state.idle_stats) {
+                        (Some(loaded), Some(idle)) => {
+                            let delta = (loaded - idle.median_ms).max(0.0);
+                            let grade = BufferbloatGrade::compute(idle.median_ms, loaded, None);
+                            (
+                                format!(
+                                    "{} [ +{:.1} ms Delta ]",
+                                    color_bold(&format!("{:.1} ms", loaded), CYBER_CYAN),
+                                    delta
+                                ),
+                                format!(
+                                    "{} ──► [ GRADE {} : {} ]",
+                                    color_bold(&format!("{:>5} RPM", grade.rpm), KIWI_EMERALD),
+                                    grade.grade,
+                                    grade.rating_label
+                                ),
+                            )
+                        }
+                        _ => (
+                            color_fg("Pending saturation...", DIM_GRAY),
+                            color_fg("Computing...", DIM_GRAY),
+                        ),
+                    };
+                let loaded_line = format!(
+                    "{}  {}",
+                    color_fg("Working (Loaded) Ping ·", DIM_GRAY),
+                    loaded_desc
+                );
+                buffer.push_str(&box_row(&loaded_line, width));
+                buffer.push('\n');
+                line_count += 1;
+
+                // Line 11: Responsiveness Score
+                let resp_line = format!(
+                    "{}  {}",
+                    color_fg("Responsiveness Score  ·", DIM_GRAY),
+                    grade_desc
+                );
+                buffer.push_str(&box_row(&resp_line, width));
+                buffer.push('\n');
+                line_count += 1;
+
+                // Line 12: Separator
+                buffer.push_str(&box_sep(width));
+                buffer.push('\n');
+                line_count += 1;
+
+                // Line 13: Footer Telemetry
                 let rss_mb = ResourceProfile::current_rss_mb();
                 let cwnd_val = state.edge_telemetry.cf_l4_cwnd.unwrap_or(0);
-                buffer.push_str(&format!(
-                    "  Active Streams: {} Multiplexed │ Edge cwnd: {} │ Memory RSS: {:.1} MB\n",
-                    state.active_streams, cwnd_val, rss_mb
-                ));
+                let footer_line = format!(
+                    "Streams: {} Multiplexed │ Edge cwnd: {} │ RSS: {:.1} MB │ Elapsed: {:.1}s",
+                    state.active_streams, cwnd_val, rss_mb, state.elapsed_secs
+                );
+                buffer.push_str(&box_row(&color_fg(&footer_line, DIM_GRAY), width));
+                buffer.push('\n');
+                line_count += 1;
+
+                // Line 14: Box Bottom
+                buffer.push_str(&box_bot(width));
+                buffer.push('\n');
                 line_count += 1;
             }
             LayoutMode::Compact => {
+                let width = (layout.cols as usize).clamp(50, 78);
                 let phase_name = match state.phase {
                     TestPhase::Warmup => "Warmup",
                     TestPhase::IdleLatency => "Idle Ping",
@@ -218,18 +273,28 @@ impl TerminalRenderer {
                     TestPhase::Complete => "Done",
                 };
 
-                buffer.push_str(&format!(
-                    "🥝 \x1b[1mKIWI\x1b[0m [Phase: \x1b[36m{}\x1b[0m] \x1b[1;32m{:.1} Mbps\x1b[0m (Peak: {:.1} Mbps)\n",
-                    phase_name, state.current_mbps, state.peak_mbps
-                ));
+                let brand = format!("🥝 KIWI [{}]", phase_name);
+                buffer.push_str(&box_top(&brand, width));
+                buffer.push('\n');
+                line_count += 1;
+
+                let spd = format!(
+                    "{} {:.1} Mbps  (Peak: {:.1} Mbps)",
+                    color_bold("SPEED:", KIWI_EMERALD),
+                    state.current_mbps,
+                    state.peak_mbps
+                );
+                buffer.push_str(&box_row(&spd, width));
+                buffer.push('\n');
                 line_count += 1;
 
                 let scale = calculate_gauge_scale(state.peak_mbps.max(state.current_mbps));
-                let gauge_bar = render_tachometer(state.current_mbps, scale, 30);
-                buffer.push_str(&format!(
-                    "  {} {:.1}/{:.0} Mbps\n",
-                    gauge_bar, state.current_mbps, scale
-                ));
+                let gauge_width = width.saturating_sub(24).min(30);
+                let gauge_bar = render_colored_tachometer(state.current_mbps, scale, gauge_width);
+                let gauge_line =
+                    format!("{} {:.1}/{:.0} Mbps", gauge_bar, state.current_mbps, scale);
+                buffer.push_str(&box_row(&gauge_line, width));
+                buffer.push('\n');
                 line_count += 1;
 
                 let idle_str = state
@@ -241,22 +306,16 @@ impl TerminalRenderer {
                     .live_loaded_ping_ms
                     .map(|p| format!("{:.1}ms", p))
                     .unwrap_or_else(|| "--".to_string());
-                buffer.push_str(&format!(
-                    "  Idle: {} │ Loaded: {} │ Streams: {}\n",
+                let lat_line = format!(
+                    "Idle: {} │ Loaded: {} │ Streams: {}",
                     idle_str, working_str, state.active_streams
-                ));
+                );
+                buffer.push_str(&box_row(&color_fg(&lat_line, DIM_GRAY), width));
+                buffer.push('\n');
                 line_count += 1;
 
-                buffer.push_str(&format!(
-                    "  Colo: {} │ RSS: {:.1} MB │ {}\n",
-                    if state.edge_telemetry.colo.is_empty() {
-                        "Edge"
-                    } else {
-                        &state.edge_telemetry.colo
-                    },
-                    ResourceProfile::current_rss_mb(),
-                    state.protocol_desc
-                ));
+                buffer.push_str(&box_bot(width));
+                buffer.push('\n');
                 line_count += 1;
             }
             LayoutMode::UltraDense => {
@@ -284,9 +343,6 @@ impl TerminalRenderer {
 
         // If we rendered lines previously, move cursor up
         if self.last_rendered_lines > 0 {
-            // \x1b[?2025h: begin synchronized update
-            // \x1b[{N}A: move cursor up N lines
-            // \r: carriage return
             let _ = write!(stdout, "\x1b[?2025h\x1b[{}A\r", self.last_rendered_lines);
         } else {
             let _ = write!(stdout, "\x1b[?2025h");
@@ -297,8 +353,8 @@ impl TerminalRenderer {
             let _ = writeln!(stdout, "\x1b[2K{}", line);
         }
 
-        // \x1b[?2025l: end synchronized update
-        let _ = write!(stdout, "\x1b[?2025l");
+        // \x1b[J: clear any leftover trailing lines, \x1b[?2025l: end synchronized update
+        let _ = write!(stdout, "\x1b[J\x1b[?2025l");
         let _ = stdout.flush();
 
         self.last_rendered_lines = line_count;
@@ -308,12 +364,8 @@ impl TerminalRenderer {
     pub fn finish_and_print_receipt(&mut self, report: &BenchmarkReport) {
         if !self.plain_mode && self.last_rendered_lines > 0 {
             let mut stdout = std::io::stdout().lock();
-            // Move up and clear all transient lines
-            let _ = write!(stdout, "\x1b[{}A\r", self.last_rendered_lines);
-            for _ in 0..self.last_rendered_lines {
-                let _ = writeln!(stdout, "\x1b[2K");
-            }
-            let _ = write!(stdout, "\x1b[{}A\r", self.last_rendered_lines);
+            // Move up to the first transient line and erase everything down to the end of screen
+            let _ = write!(stdout, "\x1b[{}A\r\x1b[J", self.last_rendered_lines);
             let _ = stdout.flush();
             self.last_rendered_lines = 0;
         }

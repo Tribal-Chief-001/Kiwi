@@ -1,99 +1,293 @@
 use crate::metrics::BenchmarkReport;
+use crate::ui::art::{
+    box_bot, box_row, box_sep, box_top, color_bold, color_fg, gradient_text, pad_to_width,
+    render_cyber_kiwi_point_cloud, visible_width, BORDER_COLOR, BRIGHT_WHITE, CYBER_CYAN,
+    DEEP_VIOLET, DIM_GRAY, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA,
+};
+use crate::ui::braille::render_colored_tachometer;
 
+/// Renders a sleek floating Bento-Box Receipt with razor-thin rounded micro-borders,
+/// glowing TrueColor pill badges, dot-matrix separators, and an embedded
+/// Ethereal Bioluminescent Cyber-Kiwi Mascot point-cloud.
 pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
-    let width = term_cols.clamp(50, 86);
-    let double_border = "═".repeat(width);
-    let single_border = "─".repeat(width);
+    let width = term_cols.clamp(74, 84);
+    let mut out = String::with_capacity(4096);
 
-    let mut out = String::new();
+    out.push('\n');
 
-    out.push_str("\x1b[1;32m🥝 KIWI BENCHMARK RECEIPT\x1b[0m\n");
-    out.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", double_border));
+    // ─── CARD 1: IDENTITY & TOPOLOGY WITH CYBER-KIWI POINT CLOUD ─────────────
+    let brand_title = format!(
+        "🥝 {}  {}",
+        color_bold("KIWI BENCHMARK RECEIPT", KIWI_EMERALD),
+        color_fg(&format!("[ v{} ]", report.version), DIM_GRAY)
+    );
+    out.push_str(&box_top(&brand_title, width));
+    out.push('\n');
 
-    // Client line
+    let kiwi_art = render_cyber_kiwi_point_cloud();
+
     let client_asn = match report.edge.asn {
         Some(asn) => format!(" (AS{})", asn),
         None => String::new(),
     };
+    let client_ip_str = if report.edge.client_ip.is_empty() {
+        "Local Host".to_string()
+    } else {
+        report.edge.client_ip.clone()
+    };
     let client_loc = if !report.edge.city.is_empty() {
-        format!(" · {}, {}", report.edge.city, report.edge.country)
+        format!("{}, {}", report.edge.city, report.edge.country)
     } else {
-        String::new()
+        "Global Edge".to_string()
     };
-    out.push_str(&format!(
-        "  \x1b[1mClient\x1b[0m       : {}{}{}\n",
-        if report.edge.client_ip.is_empty() {
-            "Local Host"
-        } else {
-            &report.edge.client_ip
-        },
-        client_asn,
-        client_loc
-    ));
 
-    // Edge node line
-    let colo_str = if !report.edge.colo.is_empty() {
+    let colo_code = if !report.edge.colo.is_empty() {
+        report.edge.colo.clone()
+    } else {
+        "CF-EDGE".to_string()
+    };
+
+    let edge_node_desc = format!("{} Anycast Fleet", colo_code);
+
+    let proto_disp = if report.protocol.len() > 34 {
+        report.protocol.replace("Dual-Stack ", "").replace(" over TLS", " · TLS")
+    } else {
+        report.protocol.clone()
+    };
+
+    let right_lines: Vec<String> = vec![
+        color_bold(
+            "NETWORK INTELLIGENCE & IDENTITY",
+            CYBER_CYAN,
+        ),
+        color_fg("· · · · · · · · · · · · · · · · · · · · · ·", (55, 65, 81)),
         format!(
-            "Anycast Fleet [{} Colocation · {}, {}]",
-            report.edge.colo, report.edge.city, report.edge.country
+            "{}  {}",
+            color_fg("Client    ·", DIM_GRAY),
+            color_bold(&format!("{}{}", client_ip_str, client_asn), BRIGHT_WHITE)
+        ),
+        format!(
+            "{}  {}",
+            color_fg("Location  ·", DIM_GRAY),
+            color_fg(&client_loc, BRIGHT_WHITE)
+        ),
+        format!(
+            "{}  {}",
+            color_fg("Edge Node ·", DIM_GRAY),
+            color_bold(&edge_node_desc, KIWI_EMERALD)
+        ),
+        format!(
+            "{}  {}",
+            color_fg("Transport ·", DIM_GRAY),
+            color_fg(&proto_disp, BRIGHT_WHITE)
+        ),
+        format!(
+            "{}  {}",
+            color_fg("Target    ·", DIM_GRAY),
+            color_fg(&report.target_host, DIM_GRAY)
+        ),
+        format!(
+            "{}  {}",
+            color_fg("Session   ·", DIM_GRAY),
+            color_fg("Nominal Saturated Zero-Loss Run", CYBER_CYAN)
+        ),
+    ];
+
+    let inner_width = width.saturating_sub(4);
+    for i in 0..8 {
+        let left = kiwi_art.get(i).cloned().unwrap_or_default();
+        let right = right_lines.get(i).cloned().unwrap_or_default();
+
+        let left_vis = visible_width(&left);
+        let space_gap = 2;
+        let right_target = inner_width.saturating_sub(left_vis + space_gap);
+        let right_padded = pad_to_width(&right, right_target);
+
+        let combined = format!("{}{}{}", left, " ".repeat(space_gap), right_padded);
+        out.push_str(&box_row(&combined, width));
+        out.push('\n');
+    }
+
+    out.push_str(&box_bot(width));
+    out.push('\n');
+
+    // ─── CARD 2: BANDWIDTH VELOCITY ──────────────────────────────────────────
+    let band_title = format!(
+        "⚡ {}",
+        gradient_text(
+            "BANDWIDTH VELOCITY",
+            &[(0.0, CYBER_CYAN), (1.0, KIWI_EMERALD)]
         )
-    } else {
-        report.target_host.clone()
-    };
-    out.push_str(&format!("  \x1b[1mEdge Node\x1b[0m    : {}\n", colo_str));
-
-    // Transport line
-    out.push_str(&format!(
-        "  \x1b[1mTransport\x1b[0m    : {}\n",
-        report.protocol
-    ));
-
-    out.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", single_border));
-
-    // Table Header
-    out.push_str("  \x1b[1mMETRIC                        MEASUREMENT         PEAK / DRIFT       RATING\x1b[0m\n");
-    out.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", single_border));
+    );
+    out.push_str(&box_top(&band_title, width));
+    out.push('\n');
 
     // Download Bandwidth
     let down_rating = rate_throughput(report.download.mbps);
-    out.push_str(&format!(
-        "  \x1b[36m📥 DOWNLOAD BANDWIDTH\x1b[0m         {:>6.1} Mbps          Peak: {:>5.1} Mbps   \x1b[1;32m{}\x1b[0m\n",
-        report.download.mbps, report.download.peak_mbps, down_rating
+    let down_badge = pill_badge(
+        &format!("{:.1} Mbps", report.download.mbps),
+        KIWI_EMERALD,
+    );
+    let down_peak_badge = format!(
+        "Peak: {}",
+        color_fg(&format!("{:.1} Mbps", report.download.peak_mbps), BRIGHT_WHITE)
+    );
+    let down_rating_badge = format!(
+        "Rating: {}",
+        pill_badge(down_rating, KIWI_EMERALD)
+    );
+
+    let down_label = color_bold("📥 DOWNLOAD BANDWIDTH", CYBER_CYAN);
+    out.push_str(&box_row(&format!("  {}", down_label), width));
+    out.push('\n');
+    out.push_str(&box_row(
+        &format!("     {}   {}   {}", down_badge, down_peak_badge, down_rating_badge),
+        width,
     ));
+    out.push('\n');
+
+    let gauge_width = inner_width.saturating_sub(8).min(46);
+    let down_scale = (report.download.peak_mbps * 1.25).max(100.0);
+    let down_tacho = render_colored_tachometer(report.download.mbps, down_scale, gauge_width);
+    out.push_str(&box_row(&format!("     {}", down_tacho), width));
+    out.push('\n');
+
+    // Dot-matrix separator
+    out.push_str(&box_sep(width));
+    out.push('\n');
 
     // Upload Bandwidth
     let up_rating = rate_throughput(report.upload.mbps);
-    out.push_str(&format!(
-        "  \x1b[35m📤 UPLOAD BANDWIDTH\x1b[0m           {:>6.1} Mbps          Peak: {:>5.1} Mbps   \x1b[1;32m{}\x1b[0m\n",
-        report.upload.mbps, report.upload.peak_mbps, up_rating
+    let up_badge = pill_badge(
+        &format!("{:.1} Mbps", report.upload.mbps),
+        NEON_MAGENTA,
+    );
+    let up_peak_badge = format!(
+        "Peak: {}",
+        color_fg(&format!("{:.1} Mbps", report.upload.peak_mbps), BRIGHT_WHITE)
+    );
+    let up_rating_badge = format!(
+        "Rating: {}",
+        pill_badge(up_rating, NEON_MAGENTA)
+    );
+
+    let up_label = color_bold("📤 UPLOAD BANDWIDTH", NEON_MAGENTA);
+    out.push_str(&box_row(&format!("  {}", up_label), width));
+    out.push('\n');
+    out.push_str(&box_row(
+        &format!("     {}   {}   {}", up_badge, up_peak_badge, up_rating_badge),
+        width,
     ));
+    out.push('\n');
+
+    let up_scale = (report.upload.peak_mbps * 1.25).max(100.0);
+    let up_tacho = render_colored_tachometer(report.upload.mbps, up_scale, gauge_width);
+    out.push_str(&box_row(&format!("     {}", up_tacho), width));
+    out.push('\n');
+
+    out.push_str(&box_bot(width));
+    out.push('\n');
+
+    // ─── CARD 3: LATENCY & BUFFERBLOAT DYNAMICS ─────────────────────────────
+    let lat_title = format!(
+        "🎯 {}",
+        gradient_text(
+            "LATENCY & RESPONSIVENESS DYNAMICS",
+            &[(0.0, ELECTRIC_AMBER), (1.0, NEON_MAGENTA)]
+        )
+    );
+    out.push_str(&box_top(&lat_title, width));
+    out.push('\n');
 
     // Idle Latency
-    out.push_str(&format!(
-        "  \x1b[33m⚡ UNLOADED IDLE LATENCY\x1b[0m       {:>6.1} ms            Jitter: ±{:>4.1} ms  {:.1}% Loss\n",
-        report.idle_latency.median_ms, report.idle_latency.jitter_ms, report.idle_latency.packet_loss_pct
+    let idle_label = color_bold("⚡ UNLOADED IDLE LATENCY", ELECTRIC_AMBER);
+    let idle_val = pill_badge(
+        &format!("{:.1} ms", report.idle_latency.median_ms),
+        ELECTRIC_AMBER,
+    );
+    let idle_metrics = format!(
+        "Jitter: ±{:.1} ms   Packet Loss: {:.1}%",
+        report.idle_latency.jitter_ms, report.idle_latency.packet_loss_pct
+    );
+    out.push_str(&box_row(&format!("  {}", idle_label), width));
+    out.push('\n');
+    out.push_str(&box_row(
+        &format!("     {}   {}", idle_val, color_fg(&idle_metrics, DIM_GRAY)),
+        width,
     ));
+    out.push('\n');
 
-    // Loaded Latency
-    out.push_str(&format!(
-        "  \x1b[34m🏋️ LOADED WORKING LATENCY\x1b[0m      {:>6.1} ms            Down: {:>4.1}ms      Up: {:>4.1}ms\n",
-        report.responsiveness.working_rtt_ms, report.loaded_down_latency.p90_ms, report.loaded_up_latency.p90_ms
+    // Loaded Working Latency
+    let loaded_label = color_bold("🏋️ LOADED WORKING LATENCY", CYBER_CYAN);
+    let loaded_val = pill_badge(
+        &format!("{:.1} ms", report.responsiveness.working_rtt_ms),
+        CYBER_CYAN,
+    );
+    let delta_str = format!("+{:.1} ms Delta", report.responsiveness.delta_ms);
+    let loaded_metrics = format!(
+        "Down: {:.1} ms · Up: {:.1} ms   [{}]",
+        report.loaded_down_latency.p90_ms,
+        report.loaded_up_latency.p90_ms,
+        color_fg(&delta_str, if report.responsiveness.delta_ms < 15.0 { KIWI_EMERALD } else { ELECTRIC_AMBER })
+    );
+    out.push_str(&box_row(&format!("  {}", loaded_label), width));
+    out.push('\n');
+    out.push_str(&box_row(
+        &format!("     {}   {}", loaded_val, color_fg(&loaded_metrics, DIM_GRAY)),
+        width,
     ));
+    out.push('\n');
 
-    // Bufferbloat Responsiveness
-    let grade_color = match report.responsiveness.grade.as_str() {
-        "A+" => "\x1b[1;36m",
-        "A" => "\x1b[1;32m",
-        "B" => "\x1b[1;33m",
-        "C" => "\x1b[1;38;5;208m",
-        _ => "\x1b[1;31m",
+    // Dot-matrix separator
+    out.push_str(&box_sep(width));
+    out.push('\n');
+
+    // Bufferbloat Responsiveness & Grade Badge
+    let bloat_label = color_bold("🎯 BUFFERBLOAT RESPONSIVENESS", KIWI_EMERALD);
+    let rpm_badge = pill_badge(
+        &format!("{} RPM", report.responsiveness.rpm),
+        KIWI_EMERALD,
+    );
+    let (grade_color, grade_glow) = match report.responsiveness.grade.as_str() {
+        "A+" => (KIWI_EMERALD, "ULTRA RESPONSIVE · ESPORTS GRADE"),
+        "A" => (KIWI_EMERALD, "EXCELLENT · LOW LATENCY BUFFER"),
+        "B" => (CYBER_CYAN, "GOOD · MINIMAL BUFFER DELAY"),
+        "C" => (ELECTRIC_AMBER, "FAIR · MODERATE BLOAT"),
+        _ => (NEON_MAGENTA, "POOR · HIGH WORKING LATENCY"),
     };
-    out.push_str(&format!(
-        "  \x1b[32m🎯 BUFFERBLOAT RESPONSIVENESS\x1b[0m  {:>6} RPM           +{:.1}ms Delta      {}GRADE {}\x1b[0m\n",
-        report.responsiveness.rpm, report.responsiveness.delta_ms, grade_color, report.responsiveness.grade
-    ));
 
-    out.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", single_border));
+    let grade_pill = pill_badge(
+        &format!("GRADE {}", report.responsiveness.grade),
+        grade_color,
+    );
+    let grade_label_styled = color_fg(grade_glow, grade_color);
+
+    out.push_str(&box_row(&format!("  {}", bloat_label), width));
+    out.push('\n');
+    out.push_str(&box_row(
+        &format!(
+            "     {}   {} ──► {}",
+            rpm_badge,
+            grade_pill,
+            grade_label_styled
+        ),
+        width,
+    ));
+    out.push('\n');
+
+    out.push_str(&box_bot(width));
+    out.push('\n');
+
+    // ─── CARD 4: EDGE & HARDWARE TELEMETRY ──────────────────────────────────
+    let telem_title = format!(
+        "🖥️ {}",
+        gradient_text(
+            "EDGE & HARDWARE TELEMETRY",
+            &[(0.0, DEEP_VIOLET), (1.0, CYBER_CYAN)]
+        )
+    );
+    out.push_str(&box_top(&telem_title, width));
+    out.push('\n');
 
     // Server Telemetry
     let cwnd_str = match report.edge.cf_l4_cwnd {
@@ -101,19 +295,22 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         None => String::new(),
     };
     let retrans_str = match report.edge.cf_l4_retrans {
-        Some(r) => format!(" · {} Server Retransmissions", r),
+        Some(r) => format!(" · {} Retrans", r),
         None => String::new(),
     };
-    out.push_str(&format!(
-        "  \x1b[1mServer Telemetry\x1b[0m   : {} Anycast Edge{}{}\n",
-        if report.edge.colo.is_empty() {
-            "Cloudflare"
-        } else {
-            &report.edge.colo
-        },
-        cwnd_str,
-        retrans_str
+    let srv_desc = format!(
+        "{} Anycast Edge{}{}",
+        colo_code, cwnd_str, retrans_str
+    );
+    out.push_str(&box_row(
+        &format!(
+            "  {}  {}",
+            color_fg("Server Telemetry ·", DIM_GRAY),
+            color_bold(&srv_desc, BRIGHT_WHITE)
+        ),
+        width,
     ));
+    out.push('\n');
 
     // PHY Link Telemetry
     let link_desc = match report.platform.link_speed_mbps {
@@ -127,23 +324,47 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         ),
     };
     let warning_note = match &report.platform.bottleneck_warning {
-        Some(w) => format!(" — \x1b[33m{}\x1b[0m", w),
-        None => " — Local link capacity nominal".to_string(),
+        Some(w) => format!(" — {}", color_fg(w, ELECTRIC_AMBER)),
+        None => format!(" — {}", color_fg("Nominal capacity", KIWI_EMERALD)),
     };
-    out.push_str(&format!(
-        "  \x1b[1mPHY Link Telemetry\x1b[0m : {}{}\n",
-        link_desc, warning_note
+    out.push_str(&box_row(
+        &format!(
+            "  {}  {}{}",
+            color_fg("PHY Link Telemetry ·", DIM_GRAY),
+            color_bold(&link_desc, BRIGHT_WHITE),
+            warning_note
+        ),
+        width,
     ));
+    out.push('\n');
 
     // Resource Profile
-    out.push_str(&format!(
-        "  \x1b[1mResource Profile\x1b[0m   : Cold Start: {:.1}ms │ Peak RSS: {:.1} MB │ Duration: {:.1}s\n",
+    let res_desc = format!(
+        "Cold: {:.1}ms · Peak RSS: {:.1} MB · Duration: {:.1}s",
         report.resources.cold_start_ms, report.resources.peak_rss_mb, report.resources.duration_secs
+    );
+    out.push_str(&box_row(
+        &format!(
+            "  {}  {}",
+            color_fg("Resource Profile ·", DIM_GRAY),
+            color_fg(&res_desc, CYBER_CYAN)
+        ),
+        width,
     ));
+    out.push('\n');
 
-    out.push_str(&format!("\x1b[38;5;242m{}\x1b[0m\n", double_border));
+    out.push_str(&box_bot(width));
+    out.push('\n');
 
     out
+}
+
+/// Formats a glowing pill badge: `[ 526.4 Mbps ]` with subtle slate borders
+fn pill_badge(content: &str, content_color: (u8, u8, u8)) -> String {
+    let bracket_l = color_fg("[ ", BORDER_COLOR);
+    let bracket_r = color_fg(" ]", BORDER_COLOR);
+    let colored_content = color_bold(content, content_color);
+    format!("{}{}{}", bracket_l, colored_content, bracket_r)
 }
 
 fn rate_throughput(mbps: f64) -> &'static str {

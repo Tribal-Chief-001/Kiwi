@@ -72,7 +72,7 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     let mut renderer = TerminalRenderer::new(is_plain || is_json, cli.low_bandwidth);
 
     let mut ui_state = LiveUiState {
-        phase: TestPhase::Warmup,
+        phase: TestPhase::IdleLatency,
         current_mbps: 0.0,
         peak_mbps: 0.0,
         total_bytes: 0,
@@ -85,14 +85,9 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         protocol_desc: proto_desc.clone(),
     };
 
-    if !is_plain && !is_json {
-        renderer.render_frame(&ui_state);
-    }
-
     let probe_pending = Arc::new(AtomicBool::new(false));
 
     // 6. Phase 1: Baseline Unloaded Idle Latency
-    ui_state.phase = TestPhase::IdleLatency;
     if !is_plain && !is_json {
         renderer.render_frame(&ui_state);
     }

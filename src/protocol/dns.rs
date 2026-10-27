@@ -24,8 +24,8 @@ pub async fn resolve_host(
     ipv4_only: bool,
     ipv6_only: bool,
 ) -> Result<DnsCandidates, std::io::Error> {
-    let addr_str = format!("{}:{}", host, port);
-    let addrs = timeout(DNS_RESOLUTION_TIMEOUT, lookup_host(&addr_str))
+    let clean_host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    let addrs = timeout(DNS_RESOLUTION_TIMEOUT, lookup_host((clean_host, port)))
         .await
         .map_err(|_| {
             std::io::Error::new(

@@ -180,6 +180,8 @@ impl H2Client {
 
             if status == http::StatusCode::TOO_MANY_REQUESTS {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            } else if !is_success {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
 
             if telemetry.is_none() && is_success {

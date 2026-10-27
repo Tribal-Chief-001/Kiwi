@@ -15,6 +15,7 @@ pub struct HttpResponseMeta {
     pub headers: HeaderMap,
     pub content_length: Option<u64>,
     pub is_chunked: bool,
+    pub connection_close: bool,
 }
 
 pub struct Http1Client {
@@ -120,12 +121,19 @@ impl Http1Client {
                 // Rate limited: back off and drain body without counting
                 let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if meta.connection_close {
+                    break;
+                }
                 continue;
             }
 
             if !is_success {
-                // Drain error response body and continue
+                // Server error / unexpected status: back off slightly and drain body
                 let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                if meta.connection_close {
+                    break;
+                }
                 continue;
             }
 
@@ -147,7 +155,7 @@ impl Http1Client {
                     };
                     if chunk_size == 0 {
                         // Read trailing CRLF and optional trailers
-                        let _ = self.fill_buf_until_crlf().await;
+                        let _ = self.drain_chunked_trailers().await;
                         break;
                     }
 
@@ -185,13 +193,19 @@ impl Http1Client {
                         }
                     }
 
+                    if remaining > 0 {
+                        break;
+                    }
+
                     // Read chunk trailing CRLF
                     let _ = self.read_exact_bytes(2).await;
                 }
-            } else {
-                // Fixed Content-Length or undefined EOF
-                let mut remaining = meta.content_length.unwrap_or(0);
 
+                if meta.connection_close {
+                    break;
+                }
+            } else if let Some(mut remaining) = meta.content_length {
+                // Fixed Content-Length
                 if !self.read_buf.is_empty() {
                     let buffered = self.read_buf.len() as u64;
                     let take = buffered.min(remaining);
@@ -225,10 +239,25 @@ impl Http1Client {
                     }
                 }
 
-                if remaining > 0 {
+                if remaining > 0 || meta.connection_close {
                     // Stopped before consuming whole body, break keep-alive
                     break;
                 }
+            } else {
+                // Undefined Content-Length and not chunked: read until EOF or stop
+                while !stop_signal.load(Ordering::Relaxed) {
+                    let n = match self.stream.read(&mut sink).await {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(_) => break,
+                    };
+                    local_batch += n as u64;
+                    if local_batch >= 65536 {
+                        total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                        local_batch = 0;
+                    }
+                }
+                break;
             }
 
             if local_batch > 0 {
@@ -305,13 +334,27 @@ impl Http1Client {
                 Err(_) => break,
             };
 
+            let is_success = meta.status_code >= 200 && meta.status_code < 300;
+
             if meta.status_code == 429 {
                 let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                if meta.connection_close {
+                    break;
+                }
                 continue;
             }
 
-            if telemetry.is_none() && meta.status_code >= 200 && meta.status_code < 300 {
+            if !is_success {
+                let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                if meta.connection_close {
+                    break;
+                }
+                continue;
+            }
+
+            if telemetry.is_none() && is_success {
                 telemetry = Some(parse_edge_telemetry(&meta.headers));
             }
 
@@ -320,6 +363,7 @@ impl Http1Client {
                 .drain_body(meta.is_chunked, meta.content_length)
                 .await
                 .is_err()
+                || meta.connection_close
             {
                 break;
             }
@@ -370,7 +414,10 @@ impl Http1Client {
         let header_text = std::str::from_utf8(header_slice)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-        let status_line = header_text.lines().next().unwrap_or("");
+        let status_line = header_text
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("");
         let status_code: u16 = status_line
             .split_whitespace()
             .nth(1)
@@ -380,8 +427,14 @@ impl Http1Client {
         let mut headers = HeaderMap::new();
         let mut content_length = None;
         let mut is_chunked = false;
+        let mut connection_close = false;
 
-        for line in header_text.lines().skip(1) {
+        let after_status = header_text
+            .lines()
+            .skip_while(|l| l.trim().is_empty())
+            .skip(1);
+
+        for line in after_status {
             if let Some((k, v)) = line.split_once(':') {
                 let key = k.trim();
                 let val = v.trim();
@@ -392,6 +445,10 @@ impl Http1Client {
                     && val.to_lowercase().contains("chunked")
                 {
                     is_chunked = true;
+                } else if key.eq_ignore_ascii_case("connection")
+                    && val.to_lowercase().contains("close")
+                {
+                    connection_close = true;
                 }
 
                 if let (Ok(h_key), Ok(h_val)) = (
@@ -408,6 +465,7 @@ impl Http1Client {
             headers,
             content_length,
             is_chunked,
+            connection_close,
         })
     }
 
@@ -460,6 +518,18 @@ impl Http1Client {
         Ok(out)
     }
 
+    async fn drain_chunked_trailers(&mut self) -> Result<(), std::io::Error> {
+        loop {
+            let pos = self.fill_buf_until_crlf().await?;
+            self.read_buf.drain(..pos + 2);
+            if pos == 0 {
+                // Empty CRLF line marks the end of trailer-section
+                break;
+            }
+        }
+        Ok(())
+    }
+
     async fn drain_body(
         &mut self,
         is_chunked: bool,
@@ -469,7 +539,7 @@ impl Http1Client {
             loop {
                 let sz = self.read_chunk_size().await?;
                 if sz == 0 {
-                    let _ = self.fill_buf_until_crlf().await;
+                    self.drain_chunked_trailers().await?;
                     break;
                 }
                 let _ = self.read_exact_bytes(sz).await?;

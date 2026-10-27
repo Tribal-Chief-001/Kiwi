@@ -340,7 +340,7 @@ async fn run_phase_saturation(
                         let res = H2Client::run_download_stream(
                             send_req,
                             host_clone,
-                            25_000_000,
+                            5_000_000,
                             bytes_counter,
                             stop_flag,
                             probe_flag,
@@ -395,7 +395,7 @@ async fn run_phase_saturation(
                         if is_down {
                             let res = h1_stream
                                 .run_download_stream(
-                                    25_000_000,
+                                    5_000_000,
                                     bytes_counter,
                                     stop_flag,
                                     probe_flag,

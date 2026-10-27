@@ -1,5 +1,9 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::lookup_host;
+use tokio::time::timeout;
+
+const DNS_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct DnsCandidates {
@@ -13,7 +17,7 @@ impl DnsCandidates {
     }
 }
 
-/// Concurrently resolve DNS candidates for target host and port, separating IPv6 and IPv4.
+/// Concurrently resolve DNS candidates for target host and port, separating IPv6 and IPv4 with 5s timeout.
 pub async fn resolve_host(
     host: &str,
     port: u16,
@@ -21,7 +25,17 @@ pub async fn resolve_host(
     ipv6_only: bool,
 ) -> Result<DnsCandidates, std::io::Error> {
     let addr_str = format!("{}:{}", host, port);
-    let addrs = lookup_host(&addr_str).await?;
+    let addrs = timeout(DNS_RESOLUTION_TIMEOUT, lookup_host(&addr_str))
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "DNS resolution timed out for {} after {:?}",
+                    host, DNS_RESOLUTION_TIMEOUT
+                ),
+            )
+        })??;
 
     let mut ipv6 = Vec::new();
     let mut ipv4 = Vec::new();

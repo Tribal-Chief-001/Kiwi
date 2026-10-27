@@ -80,14 +80,56 @@ impl Default for WindowsTimerGuard {
     }
 }
 
-/// Spawn background signal listener for SIGINT (Ctrl-C) and SIGTERM.
+/// Spawn background signal listener for SIGINT (Ctrl-C), SIGTERM, and SIGHUP.
 pub fn setup_signal_handlers() {
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            restore_terminal();
-            let _ = std::io::stderr().write_all(b"\n[!] Kiwi benchmark aborted by user signal.\n");
-            let _ = std::io::stderr().flush();
-            std::process::exit(130);
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let mut sigterm = signal(SignalKind::terminate()).ok();
+            let mut sighup = signal(SignalKind::hangup()).ok();
+
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    restore_terminal();
+                    let _ = std::io::stderr().write_all(b"\n[!] Kiwi benchmark aborted by user signal (SIGINT).\n");
+                    let _ = std::io::stderr().flush();
+                    std::process::exit(130);
+                }
+                _ = async {
+                    if let Some(ref mut st) = sigterm {
+                        st.recv().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    restore_terminal();
+                    let _ = std::io::stderr().write_all(b"\n[!] Kiwi benchmark terminated by signal (SIGTERM).\n");
+                    let _ = std::io::stderr().flush();
+                    std::process::exit(143);
+                }
+                _ = async {
+                    if let Some(ref mut sh) = sighup {
+                        sh.recv().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    restore_terminal();
+                    std::process::exit(129);
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                restore_terminal();
+                let _ =
+                    std::io::stderr().write_all(b"\n[!] Kiwi benchmark aborted by user signal.\n");
+                let _ = std::io::stderr().flush();
+                std::process::exit(130);
+            }
         }
     });
 }

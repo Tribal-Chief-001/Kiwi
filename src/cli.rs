@@ -30,11 +30,11 @@ pub struct Cli {
     pub interface: Option<String>,
 
     /// Force IPv4 stack only (disables Happy Eyeballs IPv6)
-    #[arg(short = '4')]
+    #[arg(short = '4', conflicts_with = "ipv6_only")]
     pub ipv4_only: bool,
 
     /// Force IPv6 stack only (disables Happy Eyeballs IPv4)
-    #[arg(short = '6')]
+    #[arg(short = '6', conflicts_with = "ipv4_only")]
     pub ipv6_only: bool,
 
     /// Low-bandwidth / SSH mode (throttles UI to 10 FPS, simpler glyphs)

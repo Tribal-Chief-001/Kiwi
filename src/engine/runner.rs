@@ -329,6 +329,8 @@ async fn run_phase_saturation(
             for _ in 0..config.streams {
                 let send_req = h2.send_request.clone();
                 let host_clone = config.host.to_string();
+                let candidates_clone = config.candidates.clone();
+                let iface_clone = config.specified_iface.map(|s| s.to_string());
                 let bytes_counter = total_bytes.clone();
                 let stop_flag = stop_signal.clone();
                 let probe_flag = config.probe_pending.clone();
@@ -336,35 +338,57 @@ async fn run_phase_saturation(
                 let is_down = config.is_download;
 
                 let handle = tokio::spawn(async move {
-                    if is_down {
-                        let res = H2Client::run_download_stream(
-                            send_req,
-                            host_clone,
-                            5_000_000,
-                            bytes_counter,
-                            stop_flag,
-                            probe_flag,
-                        )
-                        .await;
-                        if let Ok(Some(t)) = res {
-                            let mut guard = telem_target.lock().await;
-                            if guard.is_none() {
-                                *guard = Some(t);
+                    let mut current_send_req = send_req;
+                    while !stop_flag.load(Ordering::Relaxed) {
+                        if is_down {
+                            let res = H2Client::run_download_stream(
+                                current_send_req.clone(),
+                                host_clone.clone(),
+                                5_000_000,
+                                bytes_counter.clone(),
+                                stop_flag.clone(),
+                                probe_flag.clone(),
+                            )
+                            .await;
+                            if let Ok(Some(t)) = res {
+                                let mut guard = telem_target.lock().await;
+                                if guard.is_none() {
+                                    *guard = Some(t);
+                                }
+                            }
+                        } else {
+                            let res = H2Client::run_upload_stream(
+                                current_send_req.clone(),
+                                host_clone.clone(),
+                                bytes_counter.clone(),
+                                stop_flag.clone(),
+                                probe_flag.clone(),
+                            )
+                            .await;
+                            if let Ok(Some(t)) = res {
+                                let mut guard = telem_target.lock().await;
+                                if guard.is_none() {
+                                    *guard = Some(t);
+                                }
                             }
                         }
-                    } else {
-                        let res = H2Client::run_upload_stream(
-                            send_req,
-                            host_clone,
-                            bytes_counter,
-                            stop_flag,
-                            probe_flag,
-                        )
-                        .await;
-                        if let Ok(Some(t)) = res {
-                            let mut guard = telem_target.lock().await;
-                            if guard.is_none() {
-                                *guard = Some(t);
+
+                        if !stop_flag.load(Ordering::Relaxed) {
+                            // Seamless reconnect if connection dropped abruptly mid-test
+                            if let Ok(conn) = connect_happy_eyeballs(
+                                &host_clone,
+                                &candidates_clone,
+                                iface_clone.as_deref(),
+                            )
+                            .await
+                            {
+                                if let Ok(new_h2) =
+                                    H2Client::new(conn.tls_stream, host_clone.clone()).await
+                                {
+                                    current_send_req = new_h2.send_request;
+                                }
+                            } else {
+                                sleep(Duration::from_millis(50)).await;
                             }
                         }
                     }
@@ -384,39 +408,47 @@ async fn run_phase_saturation(
                 let is_down = config.is_download;
 
                 let handle = tokio::spawn(async move {
-                    if let Ok(conn) = connect_happy_eyeballs(
-                        &host_clone,
-                        &candidates_clone,
-                        iface_clone.as_deref(),
-                    )
-                    .await
-                    {
-                        let h1_stream = Http1Client::new(conn.tls_stream, host_clone);
-                        if is_down {
-                            let res = h1_stream
-                                .run_download_stream(
-                                    5_000_000,
-                                    bytes_counter,
-                                    stop_flag,
-                                    probe_flag,
-                                )
-                                .await;
-                            if let Ok(Some(t)) = res {
-                                let mut guard = telem_target.lock().await;
-                                if guard.is_none() {
-                                    *guard = Some(t);
+                    while !stop_flag.load(Ordering::Relaxed) {
+                        if let Ok(conn) = connect_happy_eyeballs(
+                            &host_clone,
+                            &candidates_clone,
+                            iface_clone.as_deref(),
+                        )
+                        .await
+                        {
+                            let h1_stream = Http1Client::new(conn.tls_stream, host_clone.clone());
+                            if is_down {
+                                let res = h1_stream
+                                    .run_download_stream(
+                                        5_000_000,
+                                        bytes_counter.clone(),
+                                        stop_flag.clone(),
+                                        probe_flag.clone(),
+                                    )
+                                    .await;
+                                if let Ok(Some(t)) = res {
+                                    let mut guard = telem_target.lock().await;
+                                    if guard.is_none() {
+                                        *guard = Some(t);
+                                    }
+                                }
+                            } else {
+                                let res = h1_stream
+                                    .run_upload_stream(
+                                        bytes_counter.clone(),
+                                        stop_flag.clone(),
+                                        probe_flag.clone(),
+                                    )
+                                    .await;
+                                if let Ok(Some(t)) = res {
+                                    let mut guard = telem_target.lock().await;
+                                    if guard.is_none() {
+                                        *guard = Some(t);
+                                    }
                                 }
                             }
                         } else {
-                            let res = h1_stream
-                                .run_upload_stream(bytes_counter, stop_flag, probe_flag)
-                                .await;
-                            if let Ok(Some(t)) = res {
-                                let mut guard = telem_target.lock().await;
-                                if guard.is_none() {
-                                    *guard = Some(t);
-                                }
-                            }
+                            sleep(Duration::from_millis(50)).await;
                         }
                     }
                 });
@@ -537,7 +569,6 @@ async fn run_phase_saturation(
     let mut last_tick = phase_start;
     let mut last_bytes = 0u64;
     let mut peak_mbps = 0.0f64;
-    let mut throughput_history = Vec::new();
 
     while phase_start.elapsed() < config.duration {
         sleep(tick_interval).await;
@@ -559,7 +590,7 @@ async fn run_phase_saturation(
             peak_mbps = current_mbps;
         }
 
-        throughput_history.push(current_mbps);
+        ui_state.throughput_history.push(current_mbps);
 
         // Fetch latest probe RTT
         let latest_ping = {
@@ -571,7 +602,6 @@ async fn run_phase_saturation(
         ui_state.peak_mbps = peak_mbps;
         ui_state.total_bytes = current_bytes;
         ui_state.elapsed_secs = phase_start.elapsed().as_secs_f64();
-        ui_state.throughput_history = throughput_history.clone();
         ui_state.live_loaded_ping_ms = latest_ping;
 
         if !config.suppress_ui {
@@ -625,7 +655,7 @@ async fn run_phase_saturation(
         peak_mbps,
         total_bytes: total_transferred,
         duration_secs: total_secs,
-        history: throughput_history,
+        history: ui_state.throughput_history.clone(),
     };
 
     (stats, latency_stats, telem)

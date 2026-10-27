@@ -9,6 +9,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
+#[derive(Debug, Clone)]
+pub struct HttpResponseMeta {
+    pub status_code: u16,
+    pub headers: HeaderMap,
+    pub content_length: Option<u64>,
+    pub is_chunked: bool,
+}
+
 pub struct Http1Client {
     pub stream: TlsStream<TcpStream>,
     pub host: String,
@@ -58,36 +66,26 @@ impl Http1Client {
         // Probe placed on wire; release yield
         drop(guard);
 
-        let (headers, content_length) = self.read_response_headers().await?;
+        let meta = self.read_response_headers().await?;
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-        let telemetry = parse_edge_telemetry(&headers);
+        let telemetry = parse_edge_telemetry(&meta.headers);
 
-        // Discard any response body if content_length > 0
-        let mut remaining = content_length;
-        if !self.read_buf.is_empty() {
-            let buffered = self.read_buf.len() as u64;
-            let take = buffered.min(remaining);
-            remaining -= take;
-            self.read_buf.drain(..take as usize);
-        }
-        let mut sink = [0u8; 4096];
-        while remaining > 0 {
-            let to_read = remaining.min(sink.len() as u64) as usize;
-            let n = self.stream.read(&mut sink[..to_read]).await?;
-            if n == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "Socket closed prematurely while reading probe response body",
-                ));
-            }
-            remaining -= n as u64;
+        // Always drain response body cleanly to preserve keep-alive framing
+        self.drain_body(meta.is_chunked, meta.content_length)
+            .await?;
+
+        if meta.status_code < 200 || meta.status_code >= 300 {
+            return Err(std::io::Error::other(format!(
+                "HTTP/1.1 probe failed with HTTP status {}",
+                meta.status_code
+            )));
         }
 
         Ok((elapsed_ms, Some(telemetry)))
     }
 
-    /// Run bulk download stream using L1d stack sink [u8; 16384] and task-local batching
+    /// Run bulk download stream supporting both Content-Length and Chunked Transfer Encoding
     pub async fn run_download_stream(
         mut self,
         bytes_per_req: u64,
@@ -111,58 +109,130 @@ impl Http1Client {
                 break;
             }
 
-            let (headers, content_length) = match self.read_response_headers().await {
+            let meta = match self.read_response_headers().await {
                 Ok(res) => res,
                 Err(_) => break,
             };
 
-            if telemetry.is_none() {
-                telemetry = Some(parse_edge_telemetry(&headers));
+            let is_success = meta.status_code >= 200 && meta.status_code < 300;
+
+            if meta.status_code == 429 {
+                // Rate limited: back off and drain body without counting
+                let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
             }
 
-            let mut remaining = content_length;
+            if !is_success {
+                // Drain error response body and continue
+                let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
+                continue;
+            }
+
+            if telemetry.is_none() {
+                telemetry = Some(parse_edge_telemetry(&meta.headers));
+            }
+
             let mut local_batch: u64 = 0;
 
-            if !self.read_buf.is_empty() {
-                let buffered = self.read_buf.len() as u64;
-                let take = buffered.min(remaining);
-                remaining -= take;
-                local_batch += take;
-                self.read_buf.drain(..take as usize);
-            }
+            if meta.is_chunked {
+                // Decode Chunked Transfer Encoding
+                loop {
+                    if stop_signal.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let chunk_size = match self.read_chunk_size().await {
+                        Ok(sz) => sz,
+                        Err(_) => break,
+                    };
+                    if chunk_size == 0 {
+                        // Read trailing CRLF and optional trailers
+                        let _ = self.fill_buf_until_crlf().await;
+                        break;
+                    }
 
-            while remaining > 0 && !stop_signal.load(Ordering::Relaxed) {
-                let to_read = remaining.min(sink.len() as u64) as usize;
-                let n = match self.stream.read(&mut sink[..to_read]).await {
-                    Ok(0) => break, // EOF
-                    Ok(n) => n,
-                    Err(_) => break,
-                };
+                    let mut remaining = chunk_size as u64;
+                    // Drain chunk payload
+                    if !self.read_buf.is_empty() {
+                        let buffered = self.read_buf.len() as u64;
+                        let take = buffered.min(remaining);
+                        remaining -= take;
+                        local_batch += take;
+                        self.read_buf.drain(..take as usize);
+                    }
 
-                remaining -= n as u64;
-                local_batch += n as u64;
+                    while remaining > 0 && !stop_signal.load(Ordering::Relaxed) {
+                        let to_read = remaining.min(sink.len() as u64) as usize;
+                        let n = match self.stream.read(&mut sink[..to_read]).await {
+                            Ok(0) => break,
+                            Ok(n) => n,
+                            Err(_) => break,
+                        };
+                        remaining -= n as u64;
+                        local_batch += n as u64;
 
-                if local_batch >= 65536 {
-                    total_counter.fetch_add(local_batch, Ordering::Relaxed);
-                    local_batch = 0;
+                        if local_batch >= 65536 {
+                            total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                            local_batch = 0;
+                        }
+
+                        if probe_pending.load(Ordering::Relaxed) {
+                            if local_batch > 0 {
+                                total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                                local_batch = 0;
+                            }
+                            tokio::task::yield_now().await;
+                        }
+                    }
+
+                    // Read chunk trailing CRLF
+                    let _ = self.read_exact_bytes(2).await;
+                }
+            } else {
+                // Fixed Content-Length or undefined EOF
+                let mut remaining = meta.content_length.unwrap_or(0);
+
+                if !self.read_buf.is_empty() {
+                    let buffered = self.read_buf.len() as u64;
+                    let take = buffered.min(remaining);
+                    remaining -= take;
+                    local_batch += take;
+                    self.read_buf.drain(..take as usize);
                 }
 
-                if probe_pending.load(Ordering::Relaxed) {
-                    if local_batch > 0 {
+                while remaining > 0 && !stop_signal.load(Ordering::Relaxed) {
+                    let to_read = remaining.min(sink.len() as u64) as usize;
+                    let n = match self.stream.read(&mut sink[..to_read]).await {
+                        Ok(0) => break, // EOF
+                        Ok(n) => n,
+                        Err(_) => break,
+                    };
+
+                    remaining -= n as u64;
+                    local_batch += n as u64;
+
+                    if local_batch >= 65536 {
                         total_counter.fetch_add(local_batch, Ordering::Relaxed);
                         local_batch = 0;
                     }
-                    tokio::task::yield_now().await;
+
+                    if probe_pending.load(Ordering::Relaxed) {
+                        if local_batch > 0 {
+                            total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                            local_batch = 0;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                }
+
+                if remaining > 0 {
+                    // Stopped before consuming whole body, break keep-alive
+                    break;
                 }
             }
 
             if local_batch > 0 {
                 total_counter.fetch_add(local_batch, Ordering::Relaxed);
-            }
-
-            if remaining > 0 {
-                // Stopped before consuming whole body, break keep-alive
-                break;
             }
         }
 
@@ -230,40 +300,36 @@ impl Http1Client {
                 break;
             }
 
-            let (headers, content_length) = match self.read_response_headers().await {
+            let meta = match self.read_response_headers().await {
                 Ok(res) => res,
                 Err(_) => break,
             };
 
-            if telemetry.is_none() {
-                telemetry = Some(parse_edge_telemetry(&headers));
+            if meta.status_code == 429 {
+                let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            }
+
+            if telemetry.is_none() && meta.status_code >= 200 && meta.status_code < 300 {
+                telemetry = Some(parse_edge_telemetry(&meta.headers));
             }
 
             // Drain upload response body
-            let mut remaining = content_length;
-            if !self.read_buf.is_empty() {
-                let buffered = self.read_buf.len() as u64;
-                let take = buffered.min(remaining);
-                remaining -= take;
-                self.read_buf.drain(..take as usize);
-            }
-            let mut sink = [0u8; 1024];
-            while remaining > 0 {
-                let to_read = remaining.min(sink.len() as u64) as usize;
-                let n = match self.stream.read(&mut sink[..to_read]).await {
-                    Ok(0) => break,
-                    Ok(n) => n,
-                    Err(_) => break,
-                };
-                remaining -= n as u64;
+            if self
+                .drain_body(meta.is_chunked, meta.content_length)
+                .await
+                .is_err()
+            {
+                break;
             }
         }
 
         Ok(telemetry)
     }
 
-    /// Read HTTP/1.1 response header block until \r\n\r\n and return parsed HeaderMap & Content-Length
-    async fn read_response_headers(&mut self) -> Result<(HeaderMap, u64), std::io::Error> {
+    /// Read HTTP/1.1 response header block until \r\n\r\n and return parsed HttpResponseMeta
+    pub async fn read_response_headers(&mut self) -> Result<HttpResponseMeta, std::io::Error> {
         let mut buf = [0u8; 1024];
         let mut header_bytes = Vec::with_capacity(2048);
 
@@ -304,8 +370,16 @@ impl Http1Client {
         let header_text = std::str::from_utf8(header_slice)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
+        let status_line = header_text.lines().next().unwrap_or("");
+        let status_code: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(200);
+
         let mut headers = HeaderMap::new();
-        let mut content_length = 0u64;
+        let mut content_length = None;
+        let mut is_chunked = false;
 
         for line in header_text.lines().skip(1) {
             if let Some((k, v)) = line.split_once(':') {
@@ -313,7 +387,11 @@ impl Http1Client {
                 let val = v.trim();
 
                 if key.eq_ignore_ascii_case("content-length") {
-                    content_length = val.parse().unwrap_or(0);
+                    content_length = val.parse().ok();
+                } else if key.eq_ignore_ascii_case("transfer-encoding")
+                    && val.to_lowercase().contains("chunked")
+                {
+                    is_chunked = true;
                 }
 
                 if let (Ok(h_key), Ok(h_val)) = (
@@ -325,11 +403,97 @@ impl Http1Client {
             }
         }
 
-        // If read_buf already has bytes, account for them in content_length
-        if !self.read_buf.is_empty() {
-            // Already buffered in read_buf
-        }
+        Ok(HttpResponseMeta {
+            status_code,
+            headers,
+            content_length,
+            is_chunked,
+        })
+    }
 
-        Ok((headers, content_length))
+    async fn fill_buf_until_crlf(&mut self) -> Result<usize, std::io::Error> {
+        let mut temp = [0u8; 512];
+        while !self.read_buf.windows(2).any(|w| w == b"\r\n") {
+            let n = self.stream.read(&mut temp).await?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "EOF while searching for CRLF in chunked stream",
+                ));
+            }
+            self.read_buf.extend_from_slice(&temp[..n]);
+        }
+        let pos = self.read_buf.windows(2).position(|w| w == b"\r\n").unwrap();
+        Ok(pos)
+    }
+
+    async fn read_chunk_size(&mut self) -> Result<usize, std::io::Error> {
+        let pos = self.fill_buf_until_crlf().await?;
+        let line_bytes: Vec<u8> = self.read_buf.drain(..pos + 2).collect();
+        let line_str = std::str::from_utf8(&line_bytes[..pos])
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let hex_part = line_str.split(';').next().unwrap_or("").trim();
+        usize::from_str_radix(hex_part, 16)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+
+    async fn read_exact_bytes(&mut self, mut count: usize) -> Result<Vec<u8>, std::io::Error> {
+        let mut out = Vec::with_capacity(count);
+        if !self.read_buf.is_empty() {
+            let take = self.read_buf.len().min(count);
+            out.extend(self.read_buf.drain(..take));
+            count -= take;
+        }
+        let mut temp = [0u8; 512];
+        while count > 0 {
+            let to_read = count.min(temp.len());
+            let n = self.stream.read(&mut temp[..to_read]).await?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "EOF while reading exact bytes",
+                ));
+            }
+            out.extend_from_slice(&temp[..n]);
+            count -= n;
+        }
+        Ok(out)
+    }
+
+    async fn drain_body(
+        &mut self,
+        is_chunked: bool,
+        content_length: Option<u64>,
+    ) -> Result<(), std::io::Error> {
+        if is_chunked {
+            loop {
+                let sz = self.read_chunk_size().await?;
+                if sz == 0 {
+                    let _ = self.fill_buf_until_crlf().await;
+                    break;
+                }
+                let _ = self.read_exact_bytes(sz).await?;
+                let _ = self.read_exact_bytes(2).await?; // Trailing CRLF
+            }
+        } else if let Some(mut remaining) = content_length {
+            if !self.read_buf.is_empty() {
+                let take = (self.read_buf.len() as u64).min(remaining);
+                remaining -= take;
+                self.read_buf.drain(..take as usize);
+            }
+            let mut sink = [0u8; 4096];
+            while remaining > 0 {
+                let to_read = remaining.min(sink.len() as u64) as usize;
+                let n = self.stream.read(&mut sink[..to_read]).await?;
+                if n == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "EOF while draining HTTP response body",
+                    ));
+                }
+                remaining -= n as u64;
+            }
+        }
+        Ok(())
     }
 }

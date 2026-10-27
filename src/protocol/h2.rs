@@ -113,6 +113,7 @@ impl H2Client {
             )
         })?;
 
+        let status = response.status();
         let edge_telemetry = parse_edge_telemetry(response.headers());
         let mut body = response.into_body();
 
@@ -125,6 +126,13 @@ impl H2Client {
             })?;
             let len = chunk.len();
             let _ = body.flow_control().release_capacity(len);
+        }
+
+        if !status.is_success() {
+            return Err(std::io::Error::other(format!(
+                "Probe failed with HTTP status {}",
+                status
+            )));
         }
 
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -167,14 +175,19 @@ impl H2Client {
                 Err(_) => break,
             };
 
-            if telemetry.is_none() {
+            let status = response.status();
+            let is_success = status.is_success();
+
+            if status == http::StatusCode::TOO_MANY_REQUESTS {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+
+            if telemetry.is_none() && is_success {
                 telemetry = Some(parse_edge_telemetry(response.headers()));
             }
 
             let mut body = response.into_body();
             let mut local_batch: u64 = 0;
-            // L1d-resident stack sink: 16 KB matches RFC 8446 max TLS 1.3 plaintext record
-            let mut _sink = [0u8; 16384];
 
             while let Some(chunk_res) = body.data().await {
                 if stop_signal.load(Ordering::Relaxed) {
@@ -190,19 +203,21 @@ impl H2Client {
                 // Immediate WINDOW_UPDATE flow control frame
                 let _ = body.flow_control().release_capacity(len);
 
-                local_batch += len as u64;
-                if local_batch >= 65536 {
-                    total_counter.fetch_add(local_batch, Ordering::Relaxed);
-                    local_batch = 0;
-                }
-
-                // Cooperative yield if in-band probe is dispatched
-                if probe_pending.load(Ordering::Relaxed) {
-                    if local_batch > 0 {
+                if is_success {
+                    local_batch += len as u64;
+                    if local_batch >= 65536 {
                         total_counter.fetch_add(local_batch, Ordering::Relaxed);
                         local_batch = 0;
                     }
-                    tokio::task::yield_now().await;
+
+                    // Cooperative yield if in-band probe is dispatched
+                    if probe_pending.load(Ordering::Relaxed) {
+                        if local_batch > 0 {
+                            total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                            local_batch = 0;
+                        }
+                        tokio::task::yield_now().await;
+                    }
                 }
             }
 
@@ -291,10 +306,13 @@ impl H2Client {
                 total_counter.fetch_add(local_batch, Ordering::Relaxed);
             }
 
-            if let Ok(response) = response_fut.await
-                && telemetry.is_none()
-            {
-                telemetry = Some(parse_edge_telemetry(response.headers()));
+            if let Ok(response) = response_fut.await {
+                if response.status() == http::StatusCode::TOO_MANY_REQUESTS {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                if telemetry.is_none() && response.status().is_success() {
+                    telemetry = Some(parse_edge_telemetry(response.headers()));
+                }
             }
         }
 

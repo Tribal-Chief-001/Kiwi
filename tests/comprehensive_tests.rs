@@ -544,3 +544,199 @@ fn test_linux_default_route_ipv6_tie_break_and_flags() {
         Some("eth1".to_string())
     );
 }
+
+#[test]
+fn test_cli_ipv4_and_ipv6_mutual_exclusivity() {
+    // Both -4 and -6 passed concurrently must fail argument parsing
+    let res = Cli::try_parse_from(["kiwi", "-4", "-6"]);
+    assert!(
+        res.is_err(),
+        "Cli parsing should fail when both -4 and -6 are supplied"
+    );
+}
+
+#[test]
+fn test_bufferbloat_extreme_edge_cases() {
+    // 1. Zero/sub-millisecond working RTT: RPM must be clamped cleanly without u32 overflow
+    let near_zero = BufferbloatGrade::compute(0.0, 0.0001, Some(0.0001));
+    assert_eq!(near_zero.rpm, 999_999);
+    assert_eq!(near_zero.grade, "A+");
+
+    // 2. NaN values in idle or working latency must default cleanly without panics
+    let nan_case = BufferbloatGrade::compute(f64::NAN, f64::NAN, Some(f64::NAN));
+    assert_eq!(nan_case.rpm, 0);
+    assert_eq!(nan_case.delta_ms, 0.0);
+    assert_eq!(nan_case.grade, "F");
+
+    // 3. Negative working RTT (impossible clock skew) sanitized
+    let neg_case = BufferbloatGrade::compute(10.0, -5.0, Some(-10.0));
+    assert_eq!(neg_case.rpm, 0);
+    assert_eq!(neg_case.delta_ms, 0.0);
+
+    // 4. Extremely high loaded latency (100 seconds = 0.6 RPM -> rounds to 1 RPM)
+    let slow = BufferbloatGrade::compute(20.0, 100_000.0, Some(100_000.0));
+    assert!(slow.rpm <= 1);
+    assert_eq!(slow.grade, "F");
+    assert_eq!(slow.rating_label, "SEVERE BUFFERBLOAT");
+}
+
+#[test]
+fn test_latency_stats_nan_and_negative_filtering() {
+    // 1. Vector containing NaN and negative values must be filtered out
+    let dirty_samples = vec![20.0, f64::NAN, -5.0, 25.0, f64::INFINITY, 30.0];
+    let stats = LatencyStats::calculate(dirty_samples, 6);
+    assert_eq!(stats.samples.len(), 3);
+    assert_eq!(stats.min_ms, 20.0);
+    assert_eq!(stats.median_ms, 25.0);
+    assert_eq!(stats.p90_ms, 30.0);
+    // 3 valid samples out of 6 total probes -> 50% packet loss
+    assert_eq!(stats.packet_loss_pct, 50.0);
+
+    // 2. All NaN samples -> 100% packet loss
+    let all_nan = vec![f64::NAN, f64::NAN];
+    let nan_stats = LatencyStats::calculate(all_nan, 2);
+    assert_eq!(nan_stats.packet_loss_pct, 100.0);
+    assert_eq!(nan_stats.samples.len(), 0);
+
+    // 3. Exactly identical samples -> jitter must be exactly 0.0
+    let identical = vec![15.5, 15.5, 15.5, 15.5];
+    let id_stats = LatencyStats::calculate(identical, 4);
+    assert_eq!(id_stats.jitter_ms, 0.0);
+}
+
+#[test]
+fn test_gauge_scale_extreme_values() {
+    // 1. Zero peak Mbps
+    assert_eq!(calculate_gauge_scale(0.0), 50.0);
+
+    // 2. NaN and negative numbers default to safe minimum scale
+    assert_eq!(calculate_gauge_scale(f64::NAN), 50.0);
+    assert_eq!(calculate_gauge_scale(-100.0), 50.0);
+
+    // 3. 10 Gbps (10,000 Mbps) -> 11,000 Mbps
+    assert_eq!(calculate_gauge_scale(10_000.0), 11_000.0);
+
+    // 4. 100 Gbps (100,000 Mbps) -> 101,000 Mbps
+    assert_eq!(calculate_gauge_scale(100_000.0), 101_000.0);
+}
+
+#[test]
+fn test_bento_box_responsive_narrow_and_ultrawide() {
+    let report = BenchmarkReport {
+        version: "1.0.0".to_string(),
+        timestamp: "Unix(1793094558)".to_string(),
+        target_host: "speed.cloudflare.com".to_string(),
+        protocol: "Dual-Stack IPv6 · h2 over TLS 1.3".to_string(),
+        edge: EdgeTelemetry {
+            colo: "BOM".to_string(),
+            asn: Some(55836),
+            city: "Bhopal".to_string(),
+            country: "IN".to_string(),
+            client_ip: "2409:40c4:19:8727::1".to_string(),
+            cf_l4_proto: Some("TCP".to_string()),
+            cf_l4_rtt_us: Some(42899),
+            cf_l4_min_rtt_us: Some(39859),
+            cf_l4_cwnd: Some(53),
+            cf_l4_retrans: Some(0),
+            cf_l4_delivery_rate: Some(73129),
+        },
+        idle_latency: LatencyStats {
+            min_ms: 28.4,
+            median_ms: 28.4,
+            p90_ms: 29.5,
+            jitter_ms: 0.9,
+            samples: vec![28.4, 29.5],
+            packet_loss_pct: 0.0,
+        },
+        download: ThroughputStats {
+            bps: 526_400_000.0,
+            mbps: 526.4,
+            peak_mbps: 541.2,
+            total_bytes: 384_000_000,
+            duration_secs: 5.0,
+            history: vec![500.0, 526.4],
+        },
+        loaded_down_latency: LatencyStats {
+            min_ms: 32.0,
+            median_ms: 34.8,
+            p90_ms: 34.8,
+            jitter_ms: 1.2,
+            samples: vec![34.8],
+            packet_loss_pct: 0.0,
+        },
+        upload: ThroughputStats {
+            bps: 139_800_000.0,
+            mbps: 139.8,
+            peak_mbps: 145.0,
+            total_bytes: 100_000_000,
+            duration_secs: 5.0,
+            history: vec![130.0, 139.8],
+        },
+        loaded_up_latency: LatencyStats {
+            min_ms: 35.0,
+            median_ms: 37.6,
+            p90_ms: 37.6,
+            jitter_ms: 1.5,
+            samples: vec![37.6],
+            packet_loss_pct: 0.0,
+        },
+        responsiveness: BufferbloatGrade {
+            grade: "A+".to_string(),
+            rpm: 1657,
+            working_rtt_ms: 36.2,
+            delta_ms: 7.8,
+            rating_label: "ULTRA RESPONSIVE".to_string(),
+        },
+        platform: PlatformInfo {
+            interface_name: "wlp0s20f3".to_string(),
+            link_speed_mbps: Some(866),
+            link_type: "Wi-Fi 6".to_string(),
+            is_virtual: false,
+            bottleneck_warning: None,
+        },
+        resources: ResourceProfile {
+            cold_start_ms: 3.2,
+            peak_rss_mb: 3.6,
+            duration_secs: 6.4,
+        },
+    };
+
+    // Test extreme narrow viewport: 40 columns (mobile Termux split pane)
+    let bento_40 = render_bento_box(&report, 40);
+    for line in bento_40.lines() {
+        if !line.is_empty() {
+            assert!(
+                kiwi::ui::art::visible_width(line) <= 40,
+                "Line '{}' exceeded 40 columns (width={})",
+                line,
+                kiwi::ui::art::visible_width(line)
+            );
+        }
+    }
+
+    // Test compact viewport: 55 columns
+    let bento_55 = render_bento_box(&report, 55);
+    for line in bento_55.lines() {
+        if !line.is_empty() {
+            assert!(
+                kiwi::ui::art::visible_width(line) <= 55,
+                "Line '{}' exceeded 55 columns (width={})",
+                line,
+                kiwi::ui::art::visible_width(line)
+            );
+        }
+    }
+
+    // Test ultrawide viewport: 240 columns
+    let bento_240 = render_bento_box(&report, 240);
+    assert!(bento_240.contains("KIWI BENCHMARK RECEIPT"));
+    for line in bento_240.lines() {
+        if !line.is_empty() {
+            assert!(
+                kiwi::ui::art::visible_width(line) <= 84,
+                "Line exceeded max 84 columns on ultrawide (width={})",
+                kiwi::ui::art::visible_width(line)
+            );
+        }
+    }
+}

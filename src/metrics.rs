@@ -27,6 +27,8 @@ pub struct LatencyStats {
 
 impl LatencyStats {
     pub fn calculate(mut samples: Vec<f64>, total_probes: usize) -> Self {
+        samples.retain(|s| s.is_finite() && *s >= 0.0);
+
         if samples.is_empty() {
             return Self {
                 packet_loss_pct: if total_probes > 0 { 100.0 } else { 0.0 },
@@ -91,13 +93,23 @@ pub struct BufferbloatGrade {
 
 impl BufferbloatGrade {
     pub fn compute(idle_median_ms: f64, down_p90_ms: f64, up_p90_ms: Option<f64>) -> Self {
+        let idle_median_ms = if idle_median_ms.is_finite() && idle_median_ms >= 0.0 {
+            idle_median_ms
+        } else {
+            0.0
+        };
+        let down_p90_ms = if down_p90_ms.is_finite() && down_p90_ms >= 0.0 {
+            down_p90_ms
+        } else {
+            0.0
+        };
         let working_rtt_ms = match up_p90_ms {
-            Some(up) if up > 0.0 => (down_p90_ms + up) / 2.0,
+            Some(up) if up.is_finite() && up > 0.0 => (down_p90_ms + up) / 2.0,
             _ => down_p90_ms,
         };
 
         let rpm = if working_rtt_ms > 0.0 {
-            (60_000.0 / working_rtt_ms).round() as u32
+            ((60_000.0 / working_rtt_ms).round() as u64).min(999_999) as u32
         } else {
             0
         };

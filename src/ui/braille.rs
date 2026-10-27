@@ -33,7 +33,11 @@ pub fn render_braille_canvas(history: &[f64], char_width: usize) -> (String, Str
         return (empty_line.clone(), empty_line);
     }
 
-    let max_val = history.iter().cloned().fold(1.0f64, f64::max);
+    let max_val = history
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .fold(1.0f64, f64::max);
     let history_len = history.len();
 
     for i in 0..col_count {
@@ -215,6 +219,11 @@ pub fn render_colored_tachometer(current_mbps: f64, max_mbps: f64, bar_width: us
 
 /// Calculates an intuitive dynamic gauge upper scale (e.g. 100, 250, 500, 1000, 2500, 5000, 10000 Mbps)
 pub fn calculate_gauge_scale(peak_mbps: f64) -> f64 {
+    let peak_mbps = if peak_mbps.is_finite() && peak_mbps >= 0.0 {
+        peak_mbps
+    } else {
+        0.0
+    };
     let scales = [50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0];
     for &scale in &scales {
         if peak_mbps <= scale * 0.90 {

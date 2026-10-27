@@ -99,12 +99,19 @@ impl TerminalRenderer {
                 } else {
                     "Cloudflare Anycast".to_string()
                 };
+                let proto_clean = {
+                    let p = &state.protocol_desc;
+                    let is_v6 = p.contains("IPv6") || p.contains("v6");
+                    let proto_name = if p.contains("h2") { "h2" } else { "http/1.1" };
+                    let family = if is_v6 { "IPv6" } else { "IPv4" };
+                    format!("{} · {} · TLS 1.3", family, proto_name)
+                };
                 let route_str = format!(
                     "{} {} ──► {} │ {}",
                     color_fg("ROUTE:", DIM_GRAY),
                     color_bold(client_desc.trim(), BRIGHT_WHITE),
                     color_bold(&edge_desc, KIWI_EMERALD),
-                    color_fg(&state.protocol_desc, DIM_GRAY),
+                    color_fg(&proto_clean, DIM_GRAY),
                 );
                 buffer.push_str(&box_row(&route_str, width));
                 buffer.push('\n');
@@ -336,12 +343,21 @@ impl TerminalRenderer {
                     _ => "Init".to_string(),
                 };
                 let ping = state.live_loaded_ping_ms.unwrap_or(0.0);
-                buffer.push_str(&format!(
-                    "🥝 [{}] [Ping: {}] [Streams: {}]\n",
-                    color_bold(&p_str, KIWI_EMERALD),
-                    color_bold(&format!("{:.1}ms", ping), CYBER_CYAN),
-                    state.active_streams
-                ));
+                let term_cols = layout.cols as usize;
+
+                let line = if term_cols < 46 {
+                    format!("🥝 {} · {:.0}ms", color_bold(&p_str, KIWI_EMERALD), ping)
+                } else {
+                    format!(
+                        "🥝 [{}] [Ping: {}] [Streams: {}]",
+                        color_bold(&p_str, KIWI_EMERALD),
+                        color_bold(&format!("{:.1}ms", ping), CYBER_CYAN),
+                        state.active_streams
+                    )
+                };
+                let safe_line = pad_to_width(&line, term_cols.min(art::visible_width(&line)));
+                buffer.push_str(&safe_line);
+                buffer.push('\n');
                 line_count += 1;
             }
         }

@@ -11,7 +11,7 @@ use crate::ui::braille::{calculate_gauge_scale, render_colored_tachometer};
 /// Ethereal Bioluminescent Cyber-Kiwi Mascot point-cloud.
 pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     let width = if term_cols < 74 {
-        term_cols.clamp(48, 73)
+        term_cols.clamp(40, 73)
     } else {
         term_cols.clamp(74, 84)
     };
@@ -164,13 +164,20 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     let down_label = color_bold("📥 DOWNLOAD BANDWIDTH", CYBER_CYAN);
     out.push_str(&box_row(&format!("  {}", down_label), width));
     out.push('\n');
-    out.push_str(&box_row(
-        &format!(
-            "     {}   {}   {}",
-            down_badge, down_peak_badge, down_rating_badge
-        ),
-        width,
-    ));
+    if width >= 66 {
+        out.push_str(&box_row(
+            &format!(
+                "     {}   {}   {}",
+                down_badge, down_peak_badge, down_rating_badge
+            ),
+            width,
+        ));
+    } else {
+        out.push_str(&box_row(
+            &format!("     {}   {}", down_badge, down_peak_badge),
+            width,
+        ));
+    }
     out.push('\n');
 
     let gauge_width = inner_width.saturating_sub(8).min(46);
@@ -198,13 +205,20 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     let up_label = color_bold("📤 UPLOAD BANDWIDTH", NEON_MAGENTA);
     out.push_str(&box_row(&format!("  {}", up_label), width));
     out.push('\n');
-    out.push_str(&box_row(
-        &format!(
-            "     {}   {}   {}",
-            up_badge, up_peak_badge, up_rating_badge
-        ),
-        width,
-    ));
+    if width >= 66 {
+        out.push_str(&box_row(
+            &format!(
+                "     {}   {}   {}",
+                up_badge, up_peak_badge, up_rating_badge
+            ),
+            width,
+        ));
+    } else {
+        out.push_str(&box_row(
+            &format!("     {}   {}", up_badge, up_peak_badge),
+            width,
+        ));
+    }
     out.push('\n');
 
     let up_scale = calculate_gauge_scale(report.upload.peak_mbps.max(report.upload.mbps));
@@ -251,29 +265,35 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         CYBER_CYAN,
     );
     let delta_str = format!("+{:.1} ms Delta", report.responsiveness.delta_ms);
-    let loaded_metrics = format!(
-        "Down: {:.1} ms · Up: {:.1} ms   [{}]",
-        report.loaded_down_latency.p90_ms,
-        report.loaded_up_latency.p90_ms,
-        color_fg(
-            &delta_str,
-            if report.responsiveness.delta_ms < 15.0 {
-                KIWI_EMERALD
-            } else {
-                ELECTRIC_AMBER
-            }
-        )
+    let delta_colored = color_fg(
+        &delta_str,
+        if report.responsiveness.delta_ms < 15.0 {
+            KIWI_EMERALD
+        } else {
+            ELECTRIC_AMBER
+        },
     );
     out.push_str(&box_row(&format!("  {}", loaded_label), width));
     out.push('\n');
-    out.push_str(&box_row(
-        &format!(
-            "     {}   {}",
-            loaded_val,
-            color_fg(&loaded_metrics, DIM_GRAY)
-        ),
-        width,
-    ));
+    if width >= 66 {
+        let loaded_metrics = format!(
+            "Down: {:.1} ms · Up: {:.1} ms   [{}]",
+            report.loaded_down_latency.p90_ms, report.loaded_up_latency.p90_ms, delta_colored
+        );
+        out.push_str(&box_row(
+            &format!(
+                "     {}   {}",
+                loaded_val,
+                color_fg(&loaded_metrics, DIM_GRAY)
+            ),
+            width,
+        ));
+    } else {
+        out.push_str(&box_row(
+            &format!("     {}   [{}]", loaded_val, delta_colored),
+            width,
+        ));
+    }
     out.push('\n');
 
     // Dot-matrix separator
@@ -299,13 +319,20 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
 
     out.push_str(&box_row(&format!("  {}", bloat_label), width));
     out.push('\n');
-    out.push_str(&box_row(
-        &format!(
-            "     {}   {} ──► {}",
-            rpm_badge, grade_pill, grade_label_styled
-        ),
-        width,
-    ));
+    if width >= 66 {
+        out.push_str(&box_row(
+            &format!(
+                "     {}   {} ──► {}",
+                rpm_badge, grade_pill, grade_label_styled
+            ),
+            width,
+        ));
+    } else {
+        out.push_str(&box_row(
+            &format!("     {}   {}", rpm_badge, grade_pill),
+            width,
+        ));
+    }
     out.push('\n');
 
     out.push_str(&box_bot(width));
@@ -357,15 +384,26 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         Some(w) => format!(" — {}", color_fg(w, ELECTRIC_AMBER)),
         None => format!(" — {}", color_fg("Nominal capacity", KIWI_EMERALD)),
     };
-    out.push_str(&box_row(
-        &format!(
-            "  {}  {}{}",
-            color_fg("PHY Link Telemetry ·", DIM_GRAY),
-            color_bold(&link_desc, BRIGHT_WHITE),
-            warning_note
-        ),
-        width,
-    ));
+    if width >= 66 {
+        out.push_str(&box_row(
+            &format!(
+                "  {}  {}{}",
+                color_fg("PHY Link Telemetry ·", DIM_GRAY),
+                color_bold(&link_desc, BRIGHT_WHITE),
+                warning_note
+            ),
+            width,
+        ));
+    } else {
+        out.push_str(&box_row(
+            &format!(
+                "  {}  {}",
+                color_fg("PHY Link ·", DIM_GRAY),
+                color_bold(&link_desc, BRIGHT_WHITE)
+            ),
+            width,
+        ));
+    }
     out.push('\n');
 
     // Resource Profile

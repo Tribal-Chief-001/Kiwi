@@ -10,6 +10,8 @@ use tokio_rustls::client::TlsStream;
 
 const CONNECTION_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 const TLS_HANDSHAKE_GUARD_DURATION: Duration = Duration::from_millis(500);
+const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct EstablishedConnection {
     pub tls_stream: TlsStream<TcpStream>,
@@ -55,9 +57,19 @@ pub async fn connect_happy_eyeballs(
             }
             Ok(Err(_)) | Err(_) => {
                 // IPv6 TLS stalled or timed out! Fall back immediately to IPv4 candidate.
-                let v4_addr = candidates.ipv4[0];
-                let v4_tcp = connect_single(v4_addr, specified_iface).await?;
-                let v4_tls = connector.connect(server_name, v4_tcp).await?;
+                let (v4_tcp, v4_addr) =
+                    connect_any_candidate(&candidates.ipv4, specified_iface).await?;
+                let v4_tls = tokio::time::timeout(
+                    TLS_HANDSHAKE_TIMEOUT,
+                    connector.connect(server_name, v4_tcp),
+                )
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "IPv4 fallback TLS handshake timed out after 5s",
+                    )
+                })??;
                 let alpn = v4_tls.get_ref().1.alpn_protocol().map(|p| p.to_vec());
                 Ok(EstablishedConnection {
                     tls_stream: v4_tls,
@@ -68,8 +80,18 @@ pub async fn connect_happy_eyeballs(
             }
         }
     } else {
-        // Direct TLS handshake (IPv4 or IPv6 without fallback)
-        let tls_stream = connector.connect(server_name, tcp_stream).await?;
+        // Direct TLS handshake (IPv4 or IPv6 without fallback) with 5s timeout guard
+        let tls_stream = tokio::time::timeout(
+            TLS_HANDSHAKE_TIMEOUT,
+            connector.connect(server_name, tcp_stream),
+        )
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "TLS handshake timed out after 5s",
+            )
+        })??;
         let alpn = tls_stream.get_ref().1.alpn_protocol().map(|p| p.to_vec());
         Ok(EstablishedConnection {
             tls_stream,
@@ -93,54 +115,66 @@ async fn race_tcp_connection(
 
     // If only IPv4 exists
     if candidates.ipv6.is_empty() {
-        let addr = candidates.ipv4[0];
-        let stream = connect_single(addr, specified_iface).await?;
+        let (stream, addr) = connect_any_candidate(&candidates.ipv4, specified_iface).await?;
         return Ok((stream, addr, false));
     }
 
     // If only IPv6 exists
     if candidates.ipv4.is_empty() {
-        let addr = candidates.ipv6[0];
-        let stream = connect_single(addr, specified_iface).await?;
+        let (stream, addr) = connect_any_candidate(&candidates.ipv6, specified_iface).await?;
         return Ok((stream, addr, true));
     }
 
-    // Both IPv6 and IPv4 exist: Happy Eyeballs v2 250ms staggered race
-    let v6_addr = candidates.ipv6[0];
-    let v4_addr = candidates.ipv4[0];
-    let iface_v6 = specified_iface.map(|s| s.to_string());
-    let iface_v4 = specified_iface.map(|s| s.to_string());
+    // Both IPv6 and IPv4 exist: RFC 8305 Happy Eyeballs v2 staggered race.
+    // 1. Initiate IPv6 connection
+    let v6_fut = connect_any_candidate(&candidates.ipv6, specified_iface);
+    tokio::pin!(v6_fut);
 
+    // 2. Race IPv6 against the 250ms Connection Attempt Delay
     tokio::select! {
-        res_v6 = connect_single(v6_addr, iface_v6.as_deref()) => {
+        res_v6 = &mut v6_fut => {
             match res_v6 {
-                Ok(stream) => Ok((stream, v6_addr, true)),
+                Ok((stream, addr)) => Ok((stream, addr, true)),
                 Err(_) => {
-                    // v6 failed fast, connect v4 immediately
-                    let stream = connect_single(v4_addr, iface_v4.as_deref()).await?;
-                    Ok((stream, v4_addr, false))
+                    // v6 failed fast within 250ms, connect v4 immediately
+                    let (stream, addr) = connect_any_candidate(&candidates.ipv4, specified_iface).await?;
+                    Ok((stream, addr, false))
                 }
             }
         }
         _ = sleep(CONNECTION_ATTEMPT_DELAY) => {
-            // 250ms expired! Race IPv4 concurrently with the still-running IPv6 attempt
+            // 250ms expired! Start IPv4 concurrently WITHOUT cancelling the in-flight IPv6 attempt
+            let v4_fut = connect_any_candidate(&candidates.ipv4, specified_iface);
+            tokio::pin!(v4_fut);
+
             tokio::select! {
-                res_v6 = connect_single(v6_addr, iface_v6.as_deref()) => {
+                res_v6 = &mut v6_fut => {
                     match res_v6 {
-                        Ok(stream) => Ok((stream, v6_addr, true)),
+                        Ok((stream, addr)) => Ok((stream, addr, true)),
                         Err(_) => {
-                            let stream = connect_single(v4_addr, iface_v4.as_deref()).await?;
-                            Ok((stream, v4_addr, false))
+                            // v6 errored; await in-flight v4
+                            let (stream, addr) = v4_fut.await?;
+                            Ok((stream, addr, false))
                         }
                     }
                 }
-                res_v4 = connect_single(v4_addr, iface_v4.as_deref()) => {
+                res_v4 = &mut v4_fut => {
                     match res_v4 {
-                        Ok(stream) => Ok((stream, v4_addr, false)),
-                        Err(_) => {
-                            // If v4 fails, wait for v6
-                            let stream = connect_single(v6_addr, iface_v6.as_deref()).await?;
-                            Ok((stream, v6_addr, true))
+                        Ok((stream, addr)) => Ok((stream, addr, false)),
+                        Err(v4_err) => {
+                            // v4 errored; await in-flight v6
+                            match v6_fut.await {
+                                Ok((stream, addr)) => Ok((stream, addr, true)),
+                                Err(v6_err) => {
+                                    Err(std::io::Error::new(
+                                        std::io::ErrorKind::ConnectionRefused,
+                                        format!(
+                                            "Happy Eyeballs failed on both IPv6 ({}) and IPv4 ({})",
+                                            v6_err, v4_err
+                                        ),
+                                    ))
+                                }
+                            }
                         }
                     }
                 }
@@ -149,11 +183,37 @@ async fn race_tcp_connection(
     }
 }
 
+async fn connect_any_candidate(
+    candidates: &[SocketAddr],
+    specified_iface: Option<&str>,
+) -> Result<(TcpStream, SocketAddr), std::io::Error> {
+    let mut last_err = None;
+    for &addr in candidates {
+        match connect_single(addr, specified_iface).await {
+            Ok(stream) => return Ok((stream, addr)),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No address candidates reachable",
+        )
+    }))
+}
+
 async fn connect_single(
     addr: SocketAddr,
     specified_iface: Option<&str>,
 ) -> Result<TcpStream, std::io::Error> {
-    let stream = TcpStream::connect(addr).await?;
+    let stream = tokio::time::timeout(TCP_CONNECT_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("TCP connection to {} timed out after 5s", addr),
+            )
+        })??;
     let _ = stream.set_nodelay(true);
     apply_socket_optimizations(&stream, specified_iface);
     Ok(stream)

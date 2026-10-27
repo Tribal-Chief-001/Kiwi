@@ -273,3 +273,97 @@ fn test_bento_box_receipt_rendering() {
     assert!(bento.contains("BOM"));
     assert!(bento.contains("wlp0s20f3"));
 }
+
+#[test]
+fn test_probe_pending_guard_raii() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let flag = AtomicBool::new(false);
+    assert!(!flag.load(Ordering::Relaxed));
+
+    {
+        let _guard = kiwi::protocol::ProbePendingGuard::activate(&flag);
+        assert!(flag.load(Ordering::Relaxed));
+    }
+
+    // Must be automatically restored on drop
+    assert!(!flag.load(Ordering::Relaxed));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_linux_bottleneck_evaluation() {
+    use kiwi::platform::{evaluate_bottlenecks, WirelessStats};
+
+    // 1. Half-duplex physical link
+    let half_dup = evaluate_bottlenecks(false, false, Some(1000), Some("half"), Some("up"), Some(1), None);
+    assert!(half_dup.is_some());
+    assert!(half_dup.unwrap().contains("Half-duplex"));
+
+    // 2. Degraded 100 Mbps Ethernet port
+    let degraded_100 = evaluate_bottlenecks(false, false, Some(100), Some("full"), Some("up"), Some(1), None);
+    assert!(degraded_100.is_some());
+    assert!(degraded_100.unwrap().contains("100 Mbps link detected"));
+
+    // 3. Severe 10 Mbps Ethernet port
+    let severe_10 = evaluate_bottlenecks(false, false, Some(10), Some("full"), Some("up"), Some(1), None);
+    assert!(severe_10.is_some());
+    assert!(severe_10.unwrap().contains("Severe 10 Mbps bottleneck"));
+
+    // 4. Physical carrier lost
+    let carrier_lost = evaluate_bottlenecks(false, false, Some(1000), Some("full"), Some("down"), Some(0), None);
+    assert!(carrier_lost.is_some());
+    assert!(carrier_lost.unwrap().contains("carrier signal lost"));
+
+    // 5. Weak Wi-Fi signal (-82 dBm)
+    let weak_wifi = evaluate_bottlenecks(
+        false,
+        true,
+        None,
+        None,
+        Some("up"),
+        Some(1),
+        Some(WirelessStats {
+            link_quality: Some(25),
+            signal_level_dbm: Some(-82),
+        }),
+    );
+    assert!(weak_wifi.is_some());
+    assert!(weak_wifi.unwrap().contains("Weak Wi-Fi signal (-82 dBm)"));
+
+    // 6. Healthy link (Gigabit Ethernet)
+    let healthy_eth = evaluate_bottlenecks(false, false, Some(1000), Some("full"), Some("up"), Some(1), None);
+    assert!(healthy_eth.is_none());
+
+    // 7. Healthy Wi-Fi (-42 dBm, link quality 68/70)
+    let healthy_wifi = evaluate_bottlenecks(
+        false,
+        true,
+        None,
+        None,
+        Some("up"),
+        Some(1),
+        Some(WirelessStats {
+            link_quality: Some(68),
+            signal_level_dbm: Some(-42),
+        }),
+    );
+    assert!(healthy_wifi.is_none());
+}
+
+#[test]
+fn test_extended_virtual_interface_prefixes() {
+    assert!(is_virtual_interface("tap0"));
+    assert!(is_virtual_interface("cni0"));
+    assert!(is_virtual_interface("flannel.1"));
+    assert!(is_virtual_interface("kube-bridge"));
+    assert!(is_virtual_interface("podman0"));
+}
+
+#[test]
+fn test_loaded_packet_loss_calculation() {
+    // 8 samples collected out of 10 attempted probes -> 20.0% packet loss
+    let samples = vec![30.0, 32.0, 31.0, 33.0, 34.0, 32.0, 31.0, 35.0];
+    let stats = LatencyStats::calculate(samples, 10);
+    assert_eq!(stats.samples.len(), 8);
+    assert!((stats.packet_loss_pct - 20.0).abs() < 1e-4);
+}

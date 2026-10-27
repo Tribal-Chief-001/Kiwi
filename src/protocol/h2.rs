@@ -1,5 +1,6 @@
 use crate::metrics::EdgeTelemetry;
 use crate::protocol::telemetry::parse_edge_telemetry;
+use crate::protocol::{ProbePendingGuard, PROBE_TIMEOUT};
 use bytes::Bytes;
 use h2::client::{Builder, SendRequest};
 use http::{Method, Request};
@@ -58,8 +59,22 @@ impl H2Client {
         &mut self,
         probe_pending: &AtomicBool,
     ) -> Result<(f64, Option<EdgeTelemetry>), std::io::Error> {
-        // Assert cooperative yield flag for running bulk streams
-        probe_pending.store(true, Ordering::Release);
+        tokio::time::timeout(PROBE_TIMEOUT, self.dispatch_probe_inner(probe_pending))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Probe request timed out under severe network latency/loss",
+                )
+            })?
+    }
+
+    async fn dispatch_probe_inner(
+        &mut self,
+        probe_pending: &AtomicBool,
+    ) -> Result<(f64, Option<EdgeTelemetry>), std::io::Error> {
+        // Assert cooperative yield flag with RAII auto-release
+        let guard = ProbePendingGuard::activate(probe_pending);
         tokio::task::yield_now().await;
 
         let request = Request::builder()
@@ -83,8 +98,8 @@ impl H2Client {
             .send_request(request, true)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, format!("Send request failed: {:?}", e)))?;
 
-        // De-assert probe pending once request is placed on wire
-        probe_pending.store(false, Ordering::Release);
+        // De-assert probe pending once request is queued onto the wire
+        drop(guard);
 
         let response = response_future
             .await

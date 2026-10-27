@@ -1,5 +1,6 @@
 use crate::metrics::EdgeTelemetry;
 use crate::protocol::telemetry::parse_edge_telemetry;
+use crate::protocol::{ProbePendingGuard, PROBE_TIMEOUT};
 use http::HeaderMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -28,7 +29,21 @@ impl Http1Client {
         &mut self,
         probe_pending: &AtomicBool,
     ) -> Result<(f64, Option<EdgeTelemetry>), std::io::Error> {
-        probe_pending.store(true, Ordering::Release);
+        tokio::time::timeout(PROBE_TIMEOUT, self.dispatch_probe_inner(probe_pending))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "HTTP/1.1 probe request timed out under severe network latency/loss",
+                )
+            })?
+    }
+
+    async fn dispatch_probe_inner(
+        &mut self,
+        probe_pending: &AtomicBool,
+    ) -> Result<(f64, Option<EdgeTelemetry>), std::io::Error> {
+        let guard = ProbePendingGuard::activate(probe_pending);
         tokio::task::yield_now().await;
 
         let req = format!(
@@ -40,7 +55,8 @@ impl Http1Client {
         self.stream.write_all(req.as_bytes()).await?;
         self.stream.flush().await?;
 
-        probe_pending.store(false, Ordering::Release);
+        // Probe placed on wire; release yield
+        drop(guard);
 
         let (headers, content_length) = self.read_response_headers().await?;
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;

@@ -82,8 +82,15 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     }
 
     let idle_probes_count = cli.idle_probe_count();
-    let (idle_stats, mut edge_telemetry_opt) =
-        crate::engine::probe::run_idle_latency_test(&mut client, idle_probes_count, &probe_pending).await;
+    let (idle_stats, mut edge_telemetry_opt) = crate::engine::probe::run_idle_latency_test(
+        &mut client,
+        idle_probes_count,
+        &probe_pending,
+        &cli.host,
+        &candidates,
+        cli.interface.as_deref(),
+    )
+    .await;
 
     let mut edge_telemetry = edge_telemetry_opt.take().unwrap_or_default();
     ui_state.idle_stats = Some(idle_stats.clone());
@@ -377,6 +384,8 @@ async fn run_phase_saturation(
     let probe_stop = stop_signal.clone();
     let probe_samples_target = loaded_samples.clone();
     let probe_flag = config.probe_pending.clone();
+    let attempted_probes = Arc::new(AtomicU64::new(0));
+    let attempted_counter = attempted_probes.clone();
 
     let probe_handle = match client {
         ClientHandle::H2(h2) => {
@@ -384,15 +393,30 @@ async fn run_phase_saturation(
                 send_request: h2.send_request.clone(),
                 host: config.host.to_string(),
             };
+            let host_probe = config.host.to_string();
+            let candidates_probe = config.candidates.clone();
+            let iface_probe = config.specified_iface.map(|s| s.to_string());
+
             tokio::spawn(async move {
                 while !probe_stop.load(Ordering::Relaxed) {
                     sleep(Duration::from_millis(150)).await;
                     if probe_stop.load(Ordering::Relaxed) {
                         break;
                     }
-                    if let Ok((rtt, _)) = probe_client.dispatch_probe(&probe_flag).await {
-                        let mut guard = probe_samples_target.lock().await;
-                        guard.push(rtt);
+                    attempted_counter.fetch_add(1, Ordering::Relaxed);
+                    match probe_client.dispatch_probe(&probe_flag).await {
+                        Ok((rtt, _)) => {
+                            let mut guard = probe_samples_target.lock().await;
+                            guard.push(rtt);
+                        }
+                        Err(_) => {
+                            // If H2 connection dropped or desynchronized under loss, reconnect
+                            if let Ok(conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await
+                                && let Ok(new_h2) = H2Client::new(conn.tls_stream, host_probe.clone()).await
+                            {
+                                probe_client = new_h2;
+                            }
+                        }
                     }
                 }
             })
@@ -403,15 +427,24 @@ async fn run_phase_saturation(
             let iface_probe = config.specified_iface.map(|s| s.to_string());
             tokio::spawn(async move {
                 if let Ok(conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await {
-                    let mut h1_probe = Http1Client::new(conn.tls_stream, host_probe);
+                    let mut h1_probe = Http1Client::new(conn.tls_stream, host_probe.clone());
                     while !probe_stop.load(Ordering::Relaxed) {
                         sleep(Duration::from_millis(150)).await;
                         if probe_stop.load(Ordering::Relaxed) {
                             break;
                         }
-                        if let Ok((rtt, _)) = h1_probe.dispatch_probe(&probe_flag).await {
-                            let mut guard = probe_samples_target.lock().await;
-                            guard.push(rtt);
+                        attempted_counter.fetch_add(1, Ordering::Relaxed);
+                        match h1_probe.dispatch_probe(&probe_flag).await {
+                            Ok((rtt, _)) => {
+                                let mut guard = probe_samples_target.lock().await;
+                                guard.push(rtt);
+                            }
+                            Err(_) => {
+                                // If HTTP/1.1 socket dropped or desynchronized under loss, reconnect
+                                if let Ok(new_conn) = connect_happy_eyeballs(&host_probe, &candidates_probe, iface_probe.as_deref()).await {
+                                    h1_probe = Http1Client::new(new_conn.tls_stream, host_probe.clone());
+                                }
+                            }
                         }
                     }
                 }
@@ -468,11 +501,11 @@ async fn run_phase_saturation(
         }
     }
 
-    // Stop all workers
+    // Stop all workers with timeout safety guards
     stop_signal.store(true, Ordering::Release);
-    let _ = probe_handle.await;
+    let _ = tokio::time::timeout(Duration::from_millis(800), probe_handle).await;
     for h in stream_handles {
-        let _ = h.await;
+        let _ = tokio::time::timeout(Duration::from_millis(800), h).await;
     }
 
     let total_transferred = total_bytes.load(Ordering::Relaxed);
@@ -488,8 +521,8 @@ async fn run_phase_saturation(
         let guard = loaded_samples.lock().await;
         guard.clone()
     };
-    let sample_count = final_samples.len();
-    let latency_stats = LatencyStats::calculate(final_samples, sample_count);
+    let total_attempted = (attempted_probes.load(Ordering::Relaxed) as usize).max(final_samples.len());
+    let latency_stats = LatencyStats::calculate(final_samples, total_attempted);
 
     let telem = {
         let guard = captured_telemetry.lock().await;

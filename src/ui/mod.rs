@@ -7,8 +7,8 @@ use crate::metrics::{
     BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, ResourceProfile,
 };
 use crate::ui::art::{
-    box_bot, box_row, box_sep, box_top, color_bold, color_fg, BRIGHT_WHITE, CYBER_CYAN,
-    DIM_GRAY, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA,
+    BRIGHT_WHITE, CYBER_CYAN, DIM_GRAY, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA, box_bot,
+    box_row, box_sep, box_top, color_bold, color_fg, pad_to_width,
 };
 use crate::ui::braille::{
     calculate_gauge_scale, render_colored_tachometer, render_phosphor_canvas,
@@ -118,7 +118,9 @@ impl TerminalRenderer {
                 // Line 4: Section Title & Direction Pulse
                 let (phase_title, phase_color) = match state.phase {
                     TestPhase::Warmup => ("CONNECTING & WARMING UP...", CYBER_CYAN),
-                    TestPhase::IdleLatency => ("MEASURING BASELINE IDLE LATENCY...", ELECTRIC_AMBER),
+                    TestPhase::IdleLatency => {
+                        ("MEASURING BASELINE IDLE LATENCY...", ELECTRIC_AMBER)
+                    }
                     TestPhase::Download => ("SATURATED DOWNLOAD THROUGHPUT", CYBER_CYAN),
                     TestPhase::Upload => ("SATURATED UPLOAD THROUGHPUT", NEON_MAGENTA),
                     TestPhase::Complete => ("BENCHMARK FINALIZING...", KIWI_EMERALD),
@@ -152,13 +154,18 @@ impl TerminalRenderer {
                 let transferred_mb = state.total_bytes as f64 / (1024.0 * 1024.0);
                 let transferred_str = format!("Transferred: {:>5.1} MB", transferred_mb);
 
-                let wave_row_1 = format!("{:<38}  {}", speed_badge, top_wave);
+                let inner_width = width.saturating_sub(4);
+                let left_col_width = inner_width.saturating_sub(braille_width + 2);
+                let left_row_1 = pad_to_width(&speed_badge, left_col_width);
+                let left_row_2 =
+                    pad_to_width(&color_fg(&transferred_str, DIM_GRAY), left_col_width);
+
+                let wave_row_1 = format!("{}  {}", left_row_1, top_wave);
                 buffer.push_str(&box_row(&wave_row_1, width));
                 buffer.push('\n');
                 line_count += 1;
 
-                let wave_row_2 =
-                    format!("{:<38}  {}", color_fg(&transferred_str, DIM_GRAY), bot_wave);
+                let wave_row_2 = format!("{}  {}", left_row_2, bot_wave);
                 buffer.push_str(&box_row(&wave_row_2, width));
                 buffer.push('\n');
                 line_count += 1;
@@ -192,37 +199,40 @@ impl TerminalRenderer {
                     ),
                     None => color_fg("Probing active...", DIM_GRAY),
                 };
-                let idle_line =
-                    format!("{}  {}", color_fg("Baseline (Idle) Ping  ·", DIM_GRAY), idle_desc);
+                let idle_line = format!(
+                    "{}  {}",
+                    color_fg("Baseline (Idle) Ping  ·", DIM_GRAY),
+                    idle_desc
+                );
                 buffer.push_str(&box_row(&idle_line, width));
                 buffer.push('\n');
                 line_count += 1;
 
                 // Line 10: Working (Loaded) Ping
-                let (loaded_desc, grade_desc) =
-                    match (state.live_loaded_ping_ms, &state.idle_stats) {
-                        (Some(loaded), Some(idle)) => {
-                            let delta = (loaded - idle.median_ms).max(0.0);
-                            let grade = BufferbloatGrade::compute(idle.median_ms, loaded, None);
-                            (
-                                format!(
-                                    "{} [ +{:.1} ms Delta ]",
-                                    color_bold(&format!("{:.1} ms", loaded), CYBER_CYAN),
-                                    delta
-                                ),
-                                format!(
-                                    "{} ──► [ GRADE {} : {} ]",
-                                    color_bold(&format!("{:>5} RPM", grade.rpm), KIWI_EMERALD),
-                                    grade.grade,
-                                    grade.rating_label
-                                ),
-                            )
-                        }
-                        _ => (
-                            color_fg("Pending saturation...", DIM_GRAY),
-                            color_fg("Computing...", DIM_GRAY),
-                        ),
-                    };
+                let (loaded_desc, grade_desc) = match (state.live_loaded_ping_ms, &state.idle_stats)
+                {
+                    (Some(loaded), Some(idle)) => {
+                        let delta = (loaded - idle.median_ms).max(0.0);
+                        let grade = BufferbloatGrade::compute(idle.median_ms, loaded, None);
+                        (
+                            format!(
+                                "{} [ +{:.1} ms Delta ]",
+                                color_bold(&format!("{:.1} ms", loaded), CYBER_CYAN),
+                                delta
+                            ),
+                            format!(
+                                "{} ──► [ GRADE {} : {} ]",
+                                color_bold(&format!("{:>5} RPM", grade.rpm), KIWI_EMERALD),
+                                grade.grade,
+                                grade.rating_label
+                            ),
+                        )
+                    }
+                    _ => (
+                        color_fg("Pending saturation...", DIM_GRAY),
+                        color_fg("Computing...", DIM_GRAY),
+                    ),
+                };
                 let loaded_line = format!(
                     "{}  {}",
                     color_fg("Working (Loaded) Ping ·", DIM_GRAY),
@@ -327,8 +337,10 @@ impl TerminalRenderer {
                 };
                 let ping = state.live_loaded_ping_ms.unwrap_or(0.0);
                 buffer.push_str(&format!(
-                    "🥝 [{}] [Ping: {:.1}ms] [Streams: {}]\n",
-                    p_str, ping, state.active_streams
+                    "🥝 [{}] [Ping: {}] [Streams: {}]\n",
+                    color_bold(&p_str, KIWI_EMERALD),
+                    color_bold(&format!("{:.1}ms", ping), CYBER_CYAN),
+                    state.active_streams
                 ));
                 line_count += 1;
             }

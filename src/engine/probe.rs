@@ -33,16 +33,39 @@ pub async fn run_idle_latency_test(
     candidates: &DnsCandidates,
     specified_iface: Option<&str>,
 ) -> (LatencyStats, Option<EdgeTelemetry>) {
+    run_idle_latency_test_with_progress(
+        client,
+        probe_count,
+        probe_pending,
+        host,
+        candidates,
+        specified_iface,
+        |_, _, _| (),
+    )
+    .await
+}
+
+/// Run baseline unloaded idle latency test with live per-probe progress updates.
+pub async fn run_idle_latency_test_with_progress(
+    client: &mut ClientHandle,
+    probe_count: usize,
+    probe_pending: &AtomicBool,
+    host: &str,
+    candidates: &DnsCandidates,
+    specified_iface: Option<&str>,
+    mut on_probe: impl FnMut(usize, f64, &Option<EdgeTelemetry>),
+) -> (LatencyStats, Option<EdgeTelemetry>) {
     let mut samples = Vec::with_capacity(probe_count);
     let mut edge_telemetry = None;
 
-    for _ in 0..probe_count {
+    for i in 0..probe_count {
         match client.dispatch_probe(probe_pending).await {
             Ok((rtt_ms, telemetry)) => {
                 samples.push(rtt_ms);
                 if edge_telemetry.is_none() && telemetry.is_some() {
                     edge_telemetry = telemetry;
                 }
+                on_probe(i + 1, rtt_ms, &edge_telemetry);
             }
             Err(_) => {
                 // If idle probe dropped or timed out under severe packet loss,

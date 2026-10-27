@@ -93,15 +93,32 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     }
 
     let idle_probes_count = cli.idle_probe_count();
-    let (idle_stats, mut edge_telemetry_opt) = crate::engine::probe::run_idle_latency_test(
-        &mut client,
-        idle_probes_count,
-        &probe_pending,
-        &cli.host,
-        &candidates,
-        cli.interface.as_deref(),
-    )
-    .await;
+    let mut running_idle_samples = Vec::with_capacity(idle_probes_count);
+    let (idle_stats, mut edge_telemetry_opt) =
+        crate::engine::probe::run_idle_latency_test_with_progress(
+            &mut client,
+            idle_probes_count,
+            &probe_pending,
+            &cli.host,
+            &candidates,
+            cli.interface.as_deref(),
+            |probe_idx, rtt_ms, telem| {
+                if !is_plain && !is_json {
+                    running_idle_samples.push(rtt_ms);
+                    ui_state.idle_stats = Some(LatencyStats::calculate(
+                        running_idle_samples.clone(),
+                        probe_idx,
+                    ));
+                    ui_state.live_loaded_ping_ms = Some(rtt_ms);
+                    ui_state.elapsed_secs = bench_start.elapsed().as_secs_f64();
+                    if let Some(t) = telem {
+                        merge_telemetry(&mut ui_state.edge_telemetry, t.clone());
+                    }
+                    renderer.render_frame(&ui_state);
+                }
+            },
+        )
+        .await;
 
     let mut edge_telemetry = edge_telemetry_opt.take().unwrap_or_default();
     ui_state.idle_stats = Some(idle_stats.clone());

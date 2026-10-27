@@ -282,6 +282,26 @@ fn test_bento_box_receipt_rendering() {
     assert!(bento.contains("1657 RPM"));
     assert!(bento.contains("BOM"));
     assert!(bento.contains("wlp0s20f3"));
+
+    // Narrow terminal responsive bento rendering (60 cols)
+    let bento_narrow = render_bento_box(&report, 60);
+    assert!(bento_narrow.contains("KIWI BENCHMARK RECEIPT"));
+    assert!(bento_narrow.contains("DOWNLOAD BANDWIDTH"));
+    assert!(bento_narrow.contains("526.4 Mbps"));
+    assert!(bento_narrow.contains("UPLOAD BANDWIDTH"));
+    assert!(bento_narrow.contains("GRADE A+"));
+
+    // Verify no line exceeds the target width
+    for line in bento_narrow.lines() {
+        if !line.is_empty() {
+            assert!(
+                kiwi::ui::art::visible_width(line) <= 60,
+                "Line '{}' width {} exceeded 60",
+                line,
+                kiwi::ui::art::visible_width(line)
+            );
+        }
+    }
 }
 
 #[test]

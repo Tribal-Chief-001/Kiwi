@@ -1,16 +1,20 @@
 use crate::metrics::BenchmarkReport;
 use crate::ui::art::{
-    box_bot, box_row, box_sep, box_top, color_bold, color_fg, gradient_text, pad_to_width,
-    render_cyber_kiwi_point_cloud, visible_width, BORDER_COLOR, BRIGHT_WHITE, CYBER_CYAN,
-    DEEP_VIOLET, DIM_GRAY, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA,
+    BORDER_COLOR, BRIGHT_WHITE, CYBER_CYAN, DEEP_VIOLET, DIM_GRAY, ELECTRIC_AMBER, KIWI_EMERALD,
+    NEON_MAGENTA, box_bot, box_row, box_sep, box_top, color_bold, color_fg, gradient_text,
+    pad_to_width, render_cyber_kiwi_point_cloud, visible_width,
 };
-use crate::ui::braille::render_colored_tachometer;
+use crate::ui::braille::{calculate_gauge_scale, render_colored_tachometer};
 
 /// Renders a sleek floating Bento-Box Receipt with razor-thin rounded micro-borders,
 /// glowing TrueColor pill badges, dot-matrix separators, and an embedded
 /// Ethereal Bioluminescent Cyber-Kiwi Mascot point-cloud.
 pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
-    let width = term_cols.clamp(74, 84);
+    let width = if term_cols < 74 {
+        term_cols.clamp(48, 73)
+    } else {
+        term_cols.clamp(74, 84)
+    };
     let mut out = String::with_capacity(4096);
 
     out.push('\n');
@@ -49,17 +53,23 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
 
     let edge_node_desc = format!("{} Anycast Fleet", colo_code);
 
-    let proto_disp = if report.protocol.len() > 34 {
-        report.protocol.replace("Dual-Stack ", "").replace(" over TLS", " · TLS")
-    } else {
-        report.protocol.clone()
+    let proto_disp = {
+        let mut p = report.protocol.clone();
+        if p.len() > 30 {
+            p = p.replace("Dual-Stack ", "").replace(" over TLS", " · TLS");
+        }
+        if let Some(open) = p.find('(')
+            && let Some(close) = p.find(')')
+            && close > open
+            && p.len() > 30
+        {
+            p = format!("{}{}", p[..open].trim_end(), &p[close + 1..]);
+        }
+        p
     };
 
     let right_lines: Vec<String> = vec![
-        color_bold(
-            "NETWORK INTELLIGENCE & IDENTITY",
-            CYBER_CYAN,
-        ),
+        color_bold("NETWORK INTELLIGENCE & IDENTITY", CYBER_CYAN),
         color_fg("· · · · · · · · · · · · · · · · · · · · · ·", (55, 65, 81)),
         format!(
             "{}  {}",
@@ -89,23 +99,40 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         format!(
             "{}  {}",
             color_fg("Session   ·", DIM_GRAY),
-            color_fg("Nominal Saturated Zero-Loss Run", CYBER_CYAN)
+            color_fg("Saturated Zero-Loss Run", CYBER_CYAN)
         ),
     ];
 
     let inner_width = width.saturating_sub(4);
-    for i in 0..8 {
-        let left = kiwi_art.get(i).cloned().unwrap_or_default();
-        let right = right_lines.get(i).cloned().unwrap_or_default();
+    if width >= 74 {
+        for i in 0..8 {
+            let left = kiwi_art.get(i).cloned().unwrap_or_default();
+            let right = right_lines.get(i).cloned().unwrap_or_default();
 
-        let left_vis = visible_width(&left);
-        let space_gap = 2;
-        let right_target = inner_width.saturating_sub(left_vis + space_gap);
-        let right_padded = pad_to_width(&right, right_target);
+            let left_vis = visible_width(&left);
+            let space_gap = 2;
+            let right_target = inner_width.saturating_sub(left_vis + space_gap);
+            let right_padded = pad_to_width(&right, right_target);
 
-        let combined = format!("{}{}{}", left, " ".repeat(space_gap), right_padded);
-        out.push_str(&box_row(&combined, width));
+            let combined = format!("{}{}{}", left, " ".repeat(space_gap), right_padded);
+            out.push_str(&box_row(&combined, width));
+            out.push('\n');
+        }
+    } else {
+        // Narrow viewport: center mascot on top, then separator, then metadata rows
+        for line in &kiwi_art {
+            let art_vis = visible_width(line);
+            let pad_left = inner_width.saturating_sub(art_vis) / 2;
+            let centered = format!("{}{}", " ".repeat(pad_left), line);
+            out.push_str(&box_row(&centered, width));
+            out.push('\n');
+        }
+        out.push_str(&box_sep(width));
         out.push('\n');
+        for line in &right_lines {
+            out.push_str(&box_row(line, width));
+            out.push('\n');
+        }
     }
 
     out.push_str(&box_bot(width));
@@ -124,30 +151,30 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
 
     // Download Bandwidth
     let down_rating = rate_throughput(report.download.mbps);
-    let down_badge = pill_badge(
-        &format!("{:.1} Mbps", report.download.mbps),
-        KIWI_EMERALD,
-    );
+    let down_badge = pill_badge(&format!("{:.1} Mbps", report.download.mbps), KIWI_EMERALD);
     let down_peak_badge = format!(
         "Peak: {}",
-        color_fg(&format!("{:.1} Mbps", report.download.peak_mbps), BRIGHT_WHITE)
+        color_fg(
+            &format!("{:.1} Mbps", report.download.peak_mbps),
+            BRIGHT_WHITE
+        )
     );
-    let down_rating_badge = format!(
-        "Rating: {}",
-        pill_badge(down_rating, KIWI_EMERALD)
-    );
+    let down_rating_badge = format!("Rating: {}", pill_badge(down_rating, KIWI_EMERALD));
 
     let down_label = color_bold("📥 DOWNLOAD BANDWIDTH", CYBER_CYAN);
     out.push_str(&box_row(&format!("  {}", down_label), width));
     out.push('\n');
     out.push_str(&box_row(
-        &format!("     {}   {}   {}", down_badge, down_peak_badge, down_rating_badge),
+        &format!(
+            "     {}   {}   {}",
+            down_badge, down_peak_badge, down_rating_badge
+        ),
         width,
     ));
     out.push('\n');
 
     let gauge_width = inner_width.saturating_sub(8).min(46);
-    let down_scale = (report.download.peak_mbps * 1.25).max(100.0);
+    let down_scale = calculate_gauge_scale(report.download.peak_mbps.max(report.download.mbps));
     let down_tacho = render_colored_tachometer(report.download.mbps, down_scale, gauge_width);
     out.push_str(&box_row(&format!("     {}", down_tacho), width));
     out.push('\n');
@@ -158,29 +185,29 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
 
     // Upload Bandwidth
     let up_rating = rate_throughput(report.upload.mbps);
-    let up_badge = pill_badge(
-        &format!("{:.1} Mbps", report.upload.mbps),
-        NEON_MAGENTA,
-    );
+    let up_badge = pill_badge(&format!("{:.1} Mbps", report.upload.mbps), NEON_MAGENTA);
     let up_peak_badge = format!(
         "Peak: {}",
-        color_fg(&format!("{:.1} Mbps", report.upload.peak_mbps), BRIGHT_WHITE)
+        color_fg(
+            &format!("{:.1} Mbps", report.upload.peak_mbps),
+            BRIGHT_WHITE
+        )
     );
-    let up_rating_badge = format!(
-        "Rating: {}",
-        pill_badge(up_rating, NEON_MAGENTA)
-    );
+    let up_rating_badge = format!("Rating: {}", pill_badge(up_rating, NEON_MAGENTA));
 
     let up_label = color_bold("📤 UPLOAD BANDWIDTH", NEON_MAGENTA);
     out.push_str(&box_row(&format!("  {}", up_label), width));
     out.push('\n');
     out.push_str(&box_row(
-        &format!("     {}   {}   {}", up_badge, up_peak_badge, up_rating_badge),
+        &format!(
+            "     {}   {}   {}",
+            up_badge, up_peak_badge, up_rating_badge
+        ),
         width,
     ));
     out.push('\n');
 
-    let up_scale = (report.upload.peak_mbps * 1.25).max(100.0);
+    let up_scale = calculate_gauge_scale(report.upload.peak_mbps.max(report.upload.mbps));
     let up_tacho = render_colored_tachometer(report.upload.mbps, up_scale, gauge_width);
     out.push_str(&box_row(&format!("     {}", up_tacho), width));
     out.push('\n');
@@ -228,12 +255,23 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         "Down: {:.1} ms · Up: {:.1} ms   [{}]",
         report.loaded_down_latency.p90_ms,
         report.loaded_up_latency.p90_ms,
-        color_fg(&delta_str, if report.responsiveness.delta_ms < 15.0 { KIWI_EMERALD } else { ELECTRIC_AMBER })
+        color_fg(
+            &delta_str,
+            if report.responsiveness.delta_ms < 15.0 {
+                KIWI_EMERALD
+            } else {
+                ELECTRIC_AMBER
+            }
+        )
     );
     out.push_str(&box_row(&format!("  {}", loaded_label), width));
     out.push('\n');
     out.push_str(&box_row(
-        &format!("     {}   {}", loaded_val, color_fg(&loaded_metrics, DIM_GRAY)),
+        &format!(
+            "     {}   {}",
+            loaded_val,
+            color_fg(&loaded_metrics, DIM_GRAY)
+        ),
         width,
     ));
     out.push('\n');
@@ -244,10 +282,7 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
 
     // Bufferbloat Responsiveness & Grade Badge
     let bloat_label = color_bold("🎯 BUFFERBLOAT RESPONSIVENESS", KIWI_EMERALD);
-    let rpm_badge = pill_badge(
-        &format!("{} RPM", report.responsiveness.rpm),
-        KIWI_EMERALD,
-    );
+    let rpm_badge = pill_badge(&format!("{} RPM", report.responsiveness.rpm), KIWI_EMERALD);
     let (grade_color, grade_glow) = match report.responsiveness.grade.as_str() {
         "A+" => (KIWI_EMERALD, "ULTRA RESPONSIVE · ESPORTS GRADE"),
         "A" => (KIWI_EMERALD, "EXCELLENT · LOW LATENCY BUFFER"),
@@ -267,9 +302,7 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     out.push_str(&box_row(
         &format!(
             "     {}   {} ──► {}",
-            rpm_badge,
-            grade_pill,
-            grade_label_styled
+            rpm_badge, grade_pill, grade_label_styled
         ),
         width,
     ));
@@ -298,10 +331,7 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         Some(r) => format!(" · {} Retrans", r),
         None => String::new(),
     };
-    let srv_desc = format!(
-        "{} Anycast Edge{}{}",
-        colo_code, cwnd_str, retrans_str
-    );
+    let srv_desc = format!("{} Anycast Edge{}{}", colo_code, cwnd_str, retrans_str);
     out.push_str(&box_row(
         &format!(
             "  {}  {}",
@@ -341,7 +371,9 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     // Resource Profile
     let res_desc = format!(
         "Cold: {:.1}ms · Peak RSS: {:.1} MB · Duration: {:.1}s",
-        report.resources.cold_start_ms, report.resources.peak_rss_mb, report.resources.duration_secs
+        report.resources.cold_start_ms,
+        report.resources.peak_rss_mb,
+        report.resources.duration_secs
     );
     out.push_str(&box_row(
         &format!(

@@ -43,9 +43,9 @@ pub fn render_braille_canvas(history: &[f64], char_width: usize) -> (String, Str
                 columns[i] = history[i - offset] / max_val;
             }
         } else {
-            // Sample evenly from history
-            let idx = (i * history_len) / col_count;
-            columns[i] = history[idx] / max_val;
+            // Take the most recent col_count points so the leading edge is always the latest throughput point
+            let offset = history_len - col_count;
+            columns[i] = history[offset + i] / max_val;
         }
     }
 
@@ -107,7 +107,9 @@ pub fn render_tachometer(current_mbps: f64, max_mbps: f64, bar_width: usize) -> 
 /// Oldest throughput points on the left fade into Deep Void Violet,
 /// transitioning through Neon Magenta and Cyber Cyan, ending in a radiant Kiwi Emerald leading pulse.
 pub fn render_phosphor_canvas(history: &[f64], char_width: usize) -> (String, String) {
-    use crate::ui::art::{multi_lerp, CYBER_CYAN, DEEP_VIOLET, ICE_WHITE, KIWI_EMERALD, NEON_MAGENTA};
+    use crate::ui::art::{
+        CYBER_CYAN, DEEP_VIOLET, ICE_WHITE, KIWI_EMERALD, NEON_MAGENTA, multi_lerp,
+    };
 
     let (top_raw, bot_raw) = render_braille_canvas(history, char_width);
     if char_width == 0 {
@@ -140,7 +142,10 @@ pub fn render_phosphor_canvas(history: &[f64], char_width: usize) -> (String, St
         let bch = bot_chars.get(c).copied().unwrap_or(' ');
 
         if c == char_width - 1 && tch != ' ' {
-            top_out.push_str(&format!("\x1b[1;38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, tch));
+            top_out.push_str(&format!(
+                "\x1b[1;38;2;{};{};{}m{}",
+                rgb.0, rgb.1, rgb.2, tch
+            ));
         } else if tch != ' ' {
             top_out.push_str(&format!("\x1b[38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, tch));
         } else {
@@ -148,7 +153,10 @@ pub fn render_phosphor_canvas(history: &[f64], char_width: usize) -> (String, St
         }
 
         if c == char_width - 1 && bch != ' ' {
-            bot_out.push_str(&format!("\x1b[1;38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, bch));
+            bot_out.push_str(&format!(
+                "\x1b[1;38;2;{};{};{}m{}",
+                rgb.0, rgb.1, rgb.2, bch
+            ));
         } else if bch != ' ' {
             bot_out.push_str(&format!("\x1b[38;2;{};{};{}m{}", rgb.0, rgb.1, rgb.2, bch));
         } else {
@@ -165,7 +173,7 @@ pub fn render_phosphor_canvas(history: &[f64], char_width: usize) -> (String, St
 /// Renders a TrueColor dynamic tachometer gauge with neon gradient fill:
 /// `[████████░░░░░░]`
 pub fn render_colored_tachometer(current_mbps: f64, max_mbps: f64, bar_width: usize) -> String {
-    use crate::ui::art::{multi_lerp, CYBER_CYAN, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA};
+    use crate::ui::art::{CYBER_CYAN, ELECTRIC_AMBER, KIWI_EMERALD, NEON_MAGENTA, multi_lerp};
 
     let ratio = if max_mbps > 0.0 {
         (current_mbps / max_mbps).clamp(0.0, 1.0)

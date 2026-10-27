@@ -1,15 +1,15 @@
 // Kiwi Art & Aesthetics Engine
 // High-aesthetic TrueColor, point-cloud dithering, and micro-border rendering.
 
-pub const KIWI_EMERALD: (u8, u8, u8) = (0, 245, 160);    // #00F5A0 - Bioluminescent green
-pub const CYBER_CYAN: (u8, u8, u8)   = (0, 217, 245);    // #00D9F5 - Electric cyan
-pub const NEON_MAGENTA: (u8, u8, u8) = (247, 37, 133);   // #F72585 - Hot cyber magenta
-pub const DEEP_VIOLET: (u8, u8, u8)  = (121, 40, 202);   // #7928CA - Void violet
+pub const KIWI_EMERALD: (u8, u8, u8) = (0, 245, 160); // #00F5A0 - Bioluminescent green
+pub const CYBER_CYAN: (u8, u8, u8) = (0, 217, 245); // #00D9F5 - Electric cyan
+pub const NEON_MAGENTA: (u8, u8, u8) = (247, 37, 133); // #F72585 - Hot cyber magenta
+pub const DEEP_VIOLET: (u8, u8, u8) = (121, 40, 202); // #7928CA - Void violet
 pub const ELECTRIC_AMBER: (u8, u8, u8) = (255, 183, 3); // #FFB703 - Warm accent / warning
-pub const BORDER_COLOR: (u8, u8, u8) = (45, 55, 72);     // #2D3748 - Sleek slate border
-pub const DIM_GRAY: (u8, u8, u8)     = (100, 116, 139);  // #64748B - Muted labels
-pub const BRIGHT_WHITE: (u8, u8, u8) = (241, 245, 249);  // #F1F5F9 - Text highlight
-pub const ICE_WHITE: (u8, u8, u8)    = (224, 254, 254);  // #E0FEFE - Core glow
+pub const BORDER_COLOR: (u8, u8, u8) = (45, 55, 72); // #2D3748 - Sleek slate border
+pub const DIM_GRAY: (u8, u8, u8) = (100, 116, 139); // #64748B - Muted labels
+pub const BRIGHT_WHITE: (u8, u8, u8) = (241, 245, 249); // #F1F5F9 - Text highlight
+pub const ICE_WHITE: (u8, u8, u8) = (224, 254, 254); // #E0FEFE - Core glow
 
 /// Strip ANSI escape sequences from a string to measure printable width
 pub fn strip_ansi(s: &str) -> String {
@@ -33,10 +33,18 @@ pub fn strip_ansi(s: &str) -> String {
     out
 }
 
-/// Approximate display width in terminal columns (accounting for wide emoji)
+/// Approximate display width in terminal columns (accounting for wide emoji and zero-width codepoints)
 pub fn char_width(c: char) -> usize {
     let cp = c as u32;
-    if (0x1F300..=0x1FAFF).contains(&cp) || (0x2600..=0x27BF).contains(&cp) {
+    // Zero-width characters (Variation selectors, zero-width spaces/joiners)
+    if (0xFE00..=0xFE0F).contains(&cp) || (0x200B..=0x200D).contains(&cp) {
+        0
+    } else if (0x1F300..=0x1FAFF).contains(&cp)
+        || (0x2600..=0x27BF).contains(&cp)
+        || (0x2E80..=0x9FFF).contains(&cp)
+        || (0xF900..=0xFAFF).contains(&cp)
+        || (0xFF01..=0xFF60).contains(&cp)
+    {
         2
     } else {
         1
@@ -76,7 +84,11 @@ pub fn multi_lerp(stops: &[(f64, (u8, u8, u8))], t: f64) -> (u8, u8, u8) {
         let (t0, c0) = stops[i];
         let (t1, c1) = stops[i + 1];
         if t >= t0 && t <= t1 {
-            let local_t = if (t1 - t0).abs() < 1e-6 { 0.0 } else { (t - t0) / (t1 - t0) };
+            let local_t = if (t1 - t0).abs() < 1e-6 {
+                0.0
+            } else {
+                (t - t0) / (t1 - t0)
+            };
             return lerp_rgb(c0, c1, local_t);
         }
     }
@@ -153,8 +165,14 @@ pub fn box_top(title: &str, width: usize) -> String {
         return format!("{}{}{}", corner_l, h_bar, corner_r);
     }
 
-    let title_vis = visible_width(title);
     let left_dashes = 2;
+    let max_title_vis = width.saturating_sub(left_dashes + 4);
+    let safe_title = if visible_width(title) > max_title_vis {
+        pad_to_width(title, max_title_vis)
+    } else {
+        title.to_string()
+    };
+    let title_vis = visible_width(&safe_title);
     let right_dashes = width.saturating_sub(left_dashes + title_vis + 4);
 
     format!(
@@ -162,7 +180,7 @@ pub fn box_top(title: &str, width: usize) -> String {
         corner_l,
         border_fg.repeat(left_dashes),
         " ",
-        title,
+        safe_title,
         " ",
         border_fg.repeat(right_dashes),
     ) + &corner_r
@@ -205,16 +223,16 @@ pub fn box_sep(width: usize) -> String {
 /// Uses character density ramps: `· : ÷ + * # % @` and Braille `⡀⣀⣠⣤⣶⣾⣿`
 /// with 24-bit TrueColor gradients (Deep Violet -> Neon Magenta -> Cyber Cyan -> Kiwi Emerald).
 pub fn render_cyber_kiwi_point_cloud() -> Vec<String> {
-    // 8 lines of handcrafted, mathematical point-cloud dither
+    // 8 lines of handcrafted, mathematical point-cloud dither (exact 26 chars per row)
     let raw_grid: [&str; 8] = [
-        "    . · : ÷ + ÷ : · .     ",
-        " . · ÷ * # % ⣿ % # * ÷ · .",
-        " : ÷ # ⣿ ⣿ ⠿ ⠿ ⣿ ⣿ # ÷ :  ",
-        "· ÷ % ⣿ ⡿ ⠋ · : · ⠙ ⢿ ⣿ % ÷ ·",
-        ": + # ⣿ ⡿ · ⠂ ⠐ ⠠ · ⢿ ⣿ # + :",
-        "· ÷ % ⣿ ⡿ ⠋ · : · ⠙ ⢿ ⣿ % ÷ ·",
-        " : ÷ # ⣿ ⣿ ⠿ ⠿ ⣿ ⣿ # ÷ :  ",
-        " . · ÷ * # % ⣿ % # * ÷ · .",
+        "    . · ⡀ ÷ ⣠⣄ ÷ ⡀ · .    ",
+        "  · ÷ * # ⣶ ⣿⣿ ⣶ # * ÷ ·  ",
+        " : ÷ # @ ⣿ ⠿  ⠿ ⣿ @ # ÷ : ",
+        "· ÷ % ⣾ ⡿ ⠋ ·· ⠙ ⢿ ⣾ % ÷ ·",
+        ": + # ⣿ ⡿ · ⠂⠐ · ⢿ ⣿ # + :",
+        "· ÷ % ⣾ ⡿ ⠋ ·· ⠙ ⢿ ⣾ % ÷ ·",
+        " : ÷ # @ ⣿ ⠿  ⠿ ⣿ @ # ÷ : ",
+        "  · ⣀ * # ⣶ ⣿⣿ ⣶ # * ⣀ ·  ",
     ];
 
     let stops = [
@@ -251,19 +269,19 @@ pub fn render_cyber_kiwi_point_cloud() -> Vec<String> {
             // Center is luminous cyan/white, seeds are electric magenta/amber,
             // pericarp flesh is kiwi emerald, outer skin/halo is violet/magenta
             let rgb = match ch {
-                '·' | '.' | '⠂' | '⠐' | '⠠' if dist < 1.2 => ICE_WHITE,
-                ':' if dist < 1.4 => CYBER_CYAN,
+                '·' | '.' | '⠂' | '⠐' | '⠠' if dist < 1.4 => ICE_WHITE,
+                ':' if dist < 1.6 => CYBER_CYAN,
                 '⠋' | '⠙' | '⠁' | '⠈' => ELECTRIC_AMBER,
-                '⣿' | '⡿' | '⢿' | '⠿' => KIWI_EMERALD,
-                '%' | '#' => {
-                    if dist < 2.2 {
+                '⣿' | '⣾' | '⣶' | '⡿' | '⢿' | '⠿' => KIWI_EMERALD,
+                '@' | '%' | '#' => {
+                    if dist < 2.3 {
                         KIWI_EMERALD
                     } else {
                         NEON_MAGENTA
                     }
                 }
-                '*' | '+' | '÷' => {
-                    if dist > 2.5 {
+                '*' | '+' | '÷' | '⣠' | '⣄' | '⣀' | '⡀' => {
+                    if dist > 2.6 {
                         DEEP_VIOLET
                     } else {
                         NEON_MAGENTA
@@ -303,6 +321,10 @@ mod tests {
         assert_eq!(visible_width(wide), 7);
         let padded = pad_to_width(wide, 10);
         assert_eq!(visible_width(&padded), 10);
+
+        // Test with zero-width variation selector
+        let emoji_with_vs = "🏋️ Weights"; // 2 + 0 + 1 + 7 = 10
+        assert_eq!(visible_width(emoji_with_vs), 10);
     }
 
     #[test]
@@ -313,5 +335,9 @@ mod tests {
         assert_eq!(visible_width(&bot), 20);
         let row = box_row("Content", 20);
         assert_eq!(visible_width(&row), 20);
+
+        // Overflowing title protection
+        let overflow_top = box_top("A VERY LONG TITLE THAT EXCEEDS WIDTH", 20);
+        assert_eq!(visible_width(&overflow_top), 20);
     }
 }

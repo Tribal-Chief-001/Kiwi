@@ -92,7 +92,7 @@ pub fn setup_signal_handlers() {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
                     restore_terminal();
-                    let _ = std::io::stderr().write_all(b"\n[!] Kiwi benchmark aborted by user signal (SIGINT).\n");
+                    let _ = std::io::stderr().write_all(b"\n[!] Kiwi aborted by user signal (SIGINT).\n");
                     let _ = std::io::stderr().flush();
                     std::process::exit(130);
                 }
@@ -104,7 +104,7 @@ pub fn setup_signal_handlers() {
                     }
                 } => {
                     restore_terminal();
-                    let _ = std::io::stderr().write_all(b"\n[!] Kiwi benchmark terminated by signal (SIGTERM).\n");
+                    let _ = std::io::stderr().write_all(b"\n[!] Kiwi terminated by signal (SIGTERM).\n");
                     let _ = std::io::stderr().flush();
                     std::process::exit(143);
                 }
@@ -126,7 +126,7 @@ pub fn setup_signal_handlers() {
             if tokio::signal::ctrl_c().await.is_ok() {
                 restore_terminal();
                 let _ =
-                    std::io::stderr().write_all(b"\n[!] Kiwi benchmark aborted by user signal.\n");
+                    std::io::stderr().write_all(b"\n[!] Kiwi aborted by user signal.\n");
                 let _ = std::io::stderr().flush();
                 std::process::exit(130);
             }

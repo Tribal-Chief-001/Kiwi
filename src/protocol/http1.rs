@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
+
+use crate::protocol::AnyStream;
 
 #[derive(Debug, Clone)]
 pub struct HttpResponseMeta {
@@ -19,22 +19,15 @@ pub struct HttpResponseMeta {
 }
 
 pub struct Http1Client {
-    pub stream: TlsStream<TcpStream>,
+    pub stream: AnyStream,
     pub host: String,
     pub read_buf: Vec<u8>,
     pub raw_fd: Option<i32>,
 }
 
 impl Http1Client {
-    pub fn new(stream: TlsStream<TcpStream>, host: String) -> Self {
-        #[cfg(unix)]
-        let raw_fd = {
-            use std::os::unix::io::AsRawFd;
-            Some(stream.get_ref().0.as_raw_fd())
-        };
-        #[cfg(not(unix))]
-        let raw_fd = None;
-
+    pub fn new(stream: AnyStream, host: String) -> Self {
+        let raw_fd = stream.raw_fd();
         Http1Client {
             stream,
             host,

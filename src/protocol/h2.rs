@@ -7,8 +7,6 @@ use http::{Method, Request};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
-use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
 
 pub const UPLOAD_BUFFER_SIZE: usize = 1048576; // 1 MB
 
@@ -24,6 +22,8 @@ pub static UPLOAD_BUFFER: LazyLock<Bytes> = LazyLock::new(|| {
     Bytes::from(data)
 });
 
+use crate::protocol::AnyStream;
+
 /// Represents an established HTTP/2 client multiplexer.
 #[derive(Clone)]
 pub struct H2Client {
@@ -34,16 +34,10 @@ pub struct H2Client {
 
 impl H2Client {
     pub async fn new(
-        tls_stream: TlsStream<TcpStream>,
+        stream: AnyStream,
         host: String,
     ) -> Result<Self, std::io::Error> {
-        #[cfg(unix)]
-        let raw_fd = {
-            use std::os::unix::io::AsRawFd;
-            Some(tls_stream.get_ref().0.as_raw_fd())
-        };
-        #[cfg(not(unix))]
-        let raw_fd = None;
+        let raw_fd = stream.raw_fd();
 
         let mut builder = Builder::new();
         // Dynamic BDP window scaling: 1MB stream, 2MB connection window
@@ -51,7 +45,7 @@ impl H2Client {
         builder.initial_connection_window_size(2048 * 1024);
         builder.max_concurrent_streams(128);
 
-        let (send_request, connection) = builder.handshake(tls_stream).await.map_err(|e| {
+        let (send_request, connection) = builder.handshake(stream).await.map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 format!("H2 handshake failed: {:?}", e),

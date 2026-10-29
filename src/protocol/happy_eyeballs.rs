@@ -1,12 +1,12 @@
 use crate::platform::apply_socket_optimizations;
 use crate::protocol::dns::DnsCandidates;
+use crate::protocol::stream::AnyStream;
 use crate::protocol::tls::get_tls_connector;
 use rustls::pki_types::ServerName;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::sleep;
-use tokio_rustls::client::TlsStream;
 
 const CONNECTION_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 const TLS_HANDSHAKE_GUARD_DURATION: Duration = Duration::from_millis(500);
@@ -17,7 +17,7 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 use std::os::unix::io::AsRawFd;
 
 pub struct EstablishedConnection {
-    pub tls_stream: TlsStream<TcpStream>,
+    pub stream: AnyStream,
     pub peer_addr: SocketAddr,
     pub is_ipv6: bool,
     pub alpn: Option<Vec<u8>>,
@@ -30,15 +30,46 @@ pub async fn connect_happy_eyeballs(
     candidates: &DnsCandidates,
     specified_iface: Option<&str>,
 ) -> Result<EstablishedConnection, std::io::Error> {
+    let port = candidates
+        .ipv4
+        .first()
+        .or_else(|| candidates.ipv6.first())
+        .map(|s| s.port())
+        .unwrap_or(443);
+    let plain_http = port != 443 && port != 8443;
+    connect_happy_eyeballs_ext(host, candidates, specified_iface, plain_http).await
+}
+
+/// Extended Happy Eyeballs connector with optional plain-HTTP bypass for local LAN / embedded benchmarks.
+pub async fn connect_happy_eyeballs_ext(
+    host: &str,
+    candidates: &DnsCandidates,
+    specified_iface: Option<&str>,
+    plain_http: bool,
+) -> Result<EstablishedConnection, std::io::Error> {
+    // Attempt race between IPv6 and IPv4
+    let (tcp_stream, peer_addr, is_ipv6) = race_tcp_connection(candidates, specified_iface).await?;
+
+    if plain_http {
+        #[cfg(unix)]
+        let raw_fd = Some(tcp_stream.as_raw_fd());
+        #[cfg(not(unix))]
+        let raw_fd = None;
+        return Ok(EstablishedConnection {
+            stream: AnyStream::Plain(tcp_stream),
+            peer_addr,
+            is_ipv6,
+            alpn: None,
+            raw_fd,
+        });
+    }
+
     let server_name: ServerName<'static> = ServerName::try_from(host.to_string()).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("Invalid server name: {:?}", e),
         )
     })?;
-
-    // Attempt race between IPv6 and IPv4
-    let (tcp_stream, peer_addr, is_ipv6) = race_tcp_connection(candidates, specified_iface).await?;
 
     let connector = get_tls_connector();
 
@@ -57,7 +88,7 @@ pub async fn connect_happy_eyeballs(
                 #[cfg(not(unix))]
                 let raw_fd = None;
                 Ok(EstablishedConnection {
-                    tls_stream,
+                    stream: AnyStream::Tls(Box::new(tls_stream)),
                     peer_addr,
                     is_ipv6: true,
                     alpn,
@@ -85,7 +116,7 @@ pub async fn connect_happy_eyeballs(
                 #[cfg(not(unix))]
                 let raw_fd = None;
                 Ok(EstablishedConnection {
-                    tls_stream: v4_tls,
+                    stream: AnyStream::Tls(Box::new(v4_tls)),
                     peer_addr: v4_addr,
                     is_ipv6: false,
                     alpn,
@@ -112,7 +143,7 @@ pub async fn connect_happy_eyeballs(
         #[cfg(not(unix))]
         let raw_fd = None;
         Ok(EstablishedConnection {
-            tls_stream,
+            stream: AnyStream::Tls(Box::new(tls_stream)),
             peer_addr,
             is_ipv6,
             alpn,

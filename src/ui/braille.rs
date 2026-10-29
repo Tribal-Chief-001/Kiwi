@@ -252,7 +252,12 @@ pub fn render_cdf_sparkline(samples: &[f64], width: usize) -> String {
     let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let min = sorted[0];
     let max = sorted[sorted.len() - 1];
-    let range = (max - min).max(0.001);
+
+    if (max - min) < 1e-6 {
+        return "▄".repeat(width);
+    }
+
+    let range = max - min;
 
     let mut out = String::with_capacity(width * 4);
     for i in 0..width {
@@ -280,6 +285,14 @@ mod tests {
         assert_eq!(sparkline.chars().count(), 10);
         assert!(sparkline.starts_with(' '));
         assert!(sparkline.ends_with('█'));
+    }
+
+    #[test]
+    fn test_render_cdf_sparkline_zero_variance() {
+        let samples = vec![15.0, 15.0, 15.0];
+        let sparkline = render_cdf_sparkline(&samples, 8);
+        assert_eq!(sparkline.chars().count(), 8);
+        assert_eq!(sparkline, "▄▄▄▄▄▄▄▄");
     }
 
     #[test]

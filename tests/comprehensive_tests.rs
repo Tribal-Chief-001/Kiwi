@@ -997,3 +997,78 @@ fn test_bidirectional_and_quic_cli_parsing() {
     assert_eq!(cli_alias.port, Some(9090));
     assert_eq!(cli_alias.connections, 4);
 }
+
+#[tokio::test]
+async fn test_server_daemon_down_and_up_loopback() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    // Find an ephemeral port
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    // Spawn kiwi embedded speedtest server
+    let server_task = tokio::spawn(async move {
+        let _ = kiwi::engine::server::run_server(port).await;
+    });
+
+    // Wait briefly for server bind
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // 1. Test GET /down with bytes parameter
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .expect("Failed to connect to kiwi server");
+    let req = "GET /down?bytes=50000 HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n";
+    stream.write_all(req.as_bytes()).await.unwrap();
+
+    let mut buf = vec![0u8; 65536];
+    let n = stream.read(&mut buf).await.unwrap();
+    let resp_str = String::from_utf8_lossy(&buf[..n]);
+    assert!(resp_str.contains("HTTP/1.1 200 OK"));
+    assert!(resp_str.contains("Content-Length: 50000"));
+
+    // 2. Test POST /up where headers and entire body are sent in a single contiguous write segment
+    let mut up_payload = Vec::new();
+    let body = vec![0x55u8; 32768]; // 32 KB payload
+    let up_header = format!(
+        "POST /up HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+        body.len()
+    );
+    up_payload.extend_from_slice(up_header.as_bytes());
+    up_payload.extend_from_slice(&body);
+
+    stream.write_all(&up_payload).await.unwrap();
+    let mut up_resp_buf = [0u8; 1024];
+    let n = stream.read(&mut up_resp_buf).await.unwrap();
+    let up_resp_str = String::from_utf8_lossy(&up_resp_buf[..n]);
+    assert!(up_resp_str.contains("HTTP/1.1 200 OK"));
+    assert!(up_resp_str.contains("OK"));
+
+    // 3. Test GET /down byte ceiling safety cap (max 1 GB per request)
+    let req_huge = "GET /down?bytes=999999999999 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    stream.write_all(req_huge.as_bytes()).await.unwrap();
+    let mut huge_buf = [0u8; 2048];
+    let n = stream.read(&mut huge_buf).await.unwrap();
+    let huge_resp = String::from_utf8_lossy(&huge_buf[..n]);
+    assert!(huge_resp.contains("Content-Length: 1000000000"));
+
+    server_task.abort();
+}
+
+#[test]
+fn test_cdf_sparkline_edge_cases() {
+    use kiwi::ui::braille::render_cdf_sparkline;
+
+    assert_eq!(render_cdf_sparkline(&[], 10), "");
+    assert_eq!(render_cdf_sparkline(&[10.0], 0), "");
+    assert_eq!(render_cdf_sparkline(&[42.0], 5), "▄▄▄▄▄");
+    assert_eq!(render_cdf_sparkline(&[25.0, 25.0, 25.0], 6), "▄▄▄▄▄▄");
+
+    let varied = [5.0, 10.0, 20.0, 40.0, 80.0];
+    let spark = render_cdf_sparkline(&varied, 10);
+    assert_eq!(spark.chars().count(), 10);
+    assert!(spark.starts_with(' '));
+    assert!(spark.ends_with('█'));
+}

@@ -3,8 +3,11 @@ pub mod h2;
 pub mod h3;
 pub mod happy_eyeballs;
 pub mod http1;
+pub mod stream;
 pub mod telemetry;
 pub mod tls;
+
+pub use stream::AnyStream;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

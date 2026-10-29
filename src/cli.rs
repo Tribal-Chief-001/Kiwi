@@ -65,6 +65,10 @@ pub struct Cli {
     #[arg(short = 'p', long = "port")]
     pub port: Option<u16>,
 
+    /// Force plain unencrypted HTTP (no TLS) for local LAN / embedded server benchmarking
+    #[arg(long, visible_alias = "insecure")]
+    pub http: bool,
+
     /// Run Kiwi as an embedded speedtest benchmark server for private LAN / air-gapped testing
     #[arg(long)]
     pub server: bool,

@@ -121,12 +121,12 @@ pub async fn run_idle_latency_test_with_progress(
                         if let Ok(conn) = connect_happy_eyeballs(host, candidates, specified_iface).await {
                             let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
                             if is_h2 {
-                                if let Ok(h2) = H2Client::new(conn.tls_stream, host.to_string()).await {
+                                if let Ok(h2) = H2Client::new(conn.stream, host.to_string()).await {
                                     *client = ClientHandle::H2(h2);
                                 }
                             } else {
                                 *client = ClientHandle::Http1(Box::new(Http1Client::new(
-                                    conn.tls_stream,
+                                    conn.stream,
                                     host.to_string(),
                                 )));
                             }

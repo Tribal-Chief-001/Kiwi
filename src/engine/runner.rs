@@ -31,7 +31,7 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     }
 
     // 2. DNS Resolution via Happy Eyeballs candidates
-    let port = cli.port.unwrap_or(443);
+    let port = cli.port.unwrap_or(if cli.http { 80 } else { 443 });
     let candidates = resolve_host(&cli.host, port, cli.ipv4_only, cli.ipv6_only).await?;
 
     // 3. Establish connection (HTTP/3 QUIC if --quic, else TCP + TLS with Happy Eyeballs)
@@ -61,17 +61,21 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
                 } else {
                     "IPv4"
                 };
-                let alpn = conn
-                    .alpn
-                    .as_deref()
-                    .map(|p| String::from_utf8_lossy(p).into_owned())
-                    .unwrap_or_else(|| "http/1.1".to_string());
-                let desc = format!("{} ({}) · {} over TLS 1.3", ip_family, conn.peer_addr.ip(), alpn);
+                let desc = if conn.stream.is_tls() {
+                    let alpn = conn
+                        .alpn
+                        .as_deref()
+                        .map(|p| String::from_utf8_lossy(p).into_owned())
+                        .unwrap_or_else(|| "http/1.1".to_string());
+                    format!("{} ({}) · {} over TLS 1.3", ip_family, conn.peer_addr.ip(), alpn)
+                } else {
+                    format!("{} ({}) · HTTP/1.1 (LAN / Plain)", ip_family, conn.peer_addr.ip())
+                };
                 let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
                 let client = if is_h2 {
-                    ClientHandle::H2(H2Client::new(conn.tls_stream, cli.host.clone()).await?)
+                    ClientHandle::H2(H2Client::new(conn.stream, cli.host.clone()).await?)
                 } else {
-                    ClientHandle::Http1(Box::new(Http1Client::new(conn.tls_stream, cli.host.clone())))
+                    ClientHandle::Http1(Box::new(Http1Client::new(conn.stream, cli.host.clone())))
                 };
                 (client, desc, cold_start)
             }
@@ -84,17 +88,21 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         } else {
             "IPv4"
         };
-        let alpn = conn
-            .alpn
-            .as_deref()
-            .map(|p| String::from_utf8_lossy(p).into_owned())
-            .unwrap_or_else(|| "http/1.1".to_string());
-        let desc = format!("{} ({}) · {} over TLS 1.3", ip_family, conn.peer_addr.ip(), alpn);
+        let desc = if conn.stream.is_tls() {
+            let alpn = conn
+                .alpn
+                .as_deref()
+                .map(|p| String::from_utf8_lossy(p).into_owned())
+                .unwrap_or_else(|| "http/1.1".to_string());
+            format!("{} ({}) · {} over TLS 1.3", ip_family, conn.peer_addr.ip(), alpn)
+        } else {
+            format!("{} ({}) · HTTP/1.1 (LAN / Plain)", ip_family, conn.peer_addr.ip())
+        };
         let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
         let client = if is_h2 {
-            ClientHandle::H2(H2Client::new(conn.tls_stream, cli.host.clone()).await?)
+            ClientHandle::H2(H2Client::new(conn.stream, cli.host.clone()).await?)
         } else {
-            ClientHandle::Http1(Box::new(Http1Client::new(conn.tls_stream, cli.host.clone())))
+            ClientHandle::Http1(Box::new(Http1Client::new(conn.stream, cli.host.clone())))
         };
         (client, desc, cold_start)
     };
@@ -176,6 +184,7 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         let bidi_config = BidiPhaseConfig {
             host: &cli.host,
             streams: cli.streams,
+            connections: cli.connections.max(1),
             duration: bidi_duration,
             suppress_ui: is_plain || is_json,
             probe_pending: probe_pending.clone(),
@@ -210,6 +219,7 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         let down_config = PhaseConfig {
             host: &cli.host,
             streams: cli.streams,
+            connections: cli.connections.max(1),
             duration: download_duration,
             is_download: true,
             suppress_ui: is_plain || is_json,
@@ -244,12 +254,12 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         {
             let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
             if is_h2 {
-                if let Ok(new_h2) = H2Client::new(conn.tls_stream, cli.host.clone()).await {
+                if let Ok(new_h2) = H2Client::new(conn.stream, cli.host.clone()).await {
                     client = ClientHandle::H2(new_h2);
                 }
             } else {
                 client = ClientHandle::Http1(Box::new(Http1Client::new(
-                    conn.tls_stream,
+                    conn.stream,
                     cli.host.clone(),
                 )));
             }
@@ -263,6 +273,7 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         let up_config = PhaseConfig {
             host: &cli.host,
             streams: cli.streams,
+            connections: cli.connections.max(1),
             duration: upload_duration,
             is_download: false,
             suppress_ui: is_plain || is_json,
@@ -435,6 +446,7 @@ fn merge_telemetry(target: &mut EdgeTelemetry, new_data: EdgeTelemetry) {
 pub struct BidiPhaseConfig<'a> {
     pub host: &'a str,
     pub streams: usize,
+    pub connections: usize,
     pub duration: Duration,
     pub suppress_ui: bool,
     pub probe_pending: Arc<AtomicBool>,
@@ -452,9 +464,9 @@ async fn run_audit_target(
     let conn = connect_happy_eyeballs(audit_host, &audit_candidates, cli.interface.as_deref()).await?;
     let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
     let mut audit_client = if is_h2 {
-        ClientHandle::H2(H2Client::new(conn.tls_stream, audit_host.to_string()).await?)
+        ClientHandle::H2(H2Client::new(conn.stream, audit_host.to_string()).await?)
     } else {
-        ClientHandle::Http1(Box::new(Http1Client::new(conn.tls_stream, audit_host.to_string())))
+        ClientHandle::Http1(Box::new(Http1Client::new(conn.stream, audit_host.to_string())))
     };
 
     let probe_pending = Arc::new(AtomicBool::new(false));
@@ -473,6 +485,7 @@ async fn run_audit_target(
     let config = PhaseConfig {
         host: audit_host,
         streams: cli.streams.min(4),
+        connections: 1,
         duration: audit_duration,
         is_download: true,
         suppress_ui: cli.is_plain_effective() || cli.is_json_effective(),
@@ -502,8 +515,25 @@ async fn run_bidirectional_saturation(
 
     match client {
         ClientHandle::H2(h2) => {
-            for _ in 0..config.streams {
-                let send_req = h2.send_request.clone();
+            let mut conn_pool = vec![h2.send_request.clone()];
+            if config.connections > 1 {
+                for _ in 1..config.connections {
+                    if let Ok(conn) = connect_happy_eyeballs(
+                        config.host,
+                        config.candidates,
+                        config.specified_iface,
+                    )
+                    .await
+                        && let Ok(extra_h2) =
+                            H2Client::new(conn.stream, config.host.to_string()).await
+                    {
+                        conn_pool.push(extra_h2.send_request);
+                    }
+                }
+            }
+
+            for i in 0..config.streams {
+                let send_req = conn_pool[i % conn_pool.len()].clone();
                 let host_clone = config.host.to_string();
                 let candidates_clone = config.candidates.clone();
                 let iface_clone = config.specified_iface.map(|s| s.to_string());
@@ -540,7 +570,7 @@ async fn run_bidirectional_saturation(
                             .await
                             {
                                 if let Ok(new_h2) =
-                                    H2Client::new(conn.tls_stream, host_clone.clone()).await
+                                    H2Client::new(conn.stream, host_clone.clone()).await
                                 {
                                     current_send_req = new_h2.send_request;
                                 }
@@ -553,8 +583,8 @@ async fn run_bidirectional_saturation(
                 stream_handles.push(handle);
             }
 
-            for _ in 0..config.streams {
-                let send_req = h2.send_request.clone();
+            for i in 0..config.streams {
+                let send_req = conn_pool[i % conn_pool.len()].clone();
                 let host_clone = config.host.to_string();
                 let candidates_clone = config.candidates.clone();
                 let iface_clone = config.specified_iface.map(|s| s.to_string());
@@ -590,7 +620,7 @@ async fn run_bidirectional_saturation(
                             .await
                             {
                                 if let Ok(new_h2) =
-                                    H2Client::new(conn.tls_stream, host_clone.clone()).await
+                                    H2Client::new(conn.stream, host_clone.clone()).await
                                 {
                                     current_send_req = new_h2.send_request;
                                 }
@@ -622,7 +652,7 @@ async fn run_bidirectional_saturation(
                         )
                         .await
                         {
-                            let h1_stream = Http1Client::new(conn.tls_stream, host_clone.clone());
+                            let h1_stream = Http1Client::new(conn.stream, host_clone.clone());
                             let res = h1_stream
                                 .run_download_stream(
                                     5_000_000,
@@ -663,7 +693,7 @@ async fn run_bidirectional_saturation(
                         )
                         .await
                         {
-                            let h1_stream = Http1Client::new(conn.tls_stream, host_clone.clone());
+                            let h1_stream = Http1Client::new(conn.stream, host_clone.clone());
                             let res = h1_stream
                                 .run_upload_stream(
                                     bytes_counter.clone(),
@@ -686,8 +716,17 @@ async fn run_bidirectional_saturation(
             }
         }
         ClientHandle::H3(h3) => {
-            for _ in 0..config.streams {
-                let send_req = h3.send_request.clone();
+            let mut conn_pool = vec![h3.send_request.clone()];
+            if config.connections > 1 {
+                for _ in 1..config.connections {
+                    if let Ok(extra_h3) = H3Client::connect(config.host, config.candidates).await {
+                        conn_pool.push(extra_h3.send_request);
+                    }
+                }
+            }
+
+            for i in 0..config.streams {
+                let send_req = conn_pool[i % conn_pool.len()].clone();
                 let host_clone = config.host.to_string();
                 let candidates_clone = config.candidates.clone();
                 let bytes_counter = down_bytes.clone();
@@ -728,8 +767,8 @@ async fn run_bidirectional_saturation(
                 stream_handles.push(handle);
             }
 
-            for _ in 0..config.streams {
-                let send_req = h3.send_request.clone();
+            for i in 0..config.streams {
+                let send_req = conn_pool[i % conn_pool.len()].clone();
                 let host_clone = config.host.to_string();
                 let candidates_clone = config.candidates.clone();
                 let bytes_counter = up_bytes.clone();
@@ -809,7 +848,7 @@ async fn run_bidirectional_saturation(
                             )
                             .await
                                 && let Ok(new_h2) =
-                                    H2Client::new(conn.tls_stream, host_probe.clone()).await
+                                    H2Client::new(conn.stream, host_probe.clone()).await
                             {
                                 probe_client = new_h2;
                             }
@@ -838,7 +877,7 @@ async fn run_bidirectional_saturation(
                         .await
                         {
                             h1_probe_opt =
-                                Some(Http1Client::new(conn.tls_stream, host_probe.clone()));
+                                Some(Http1Client::new(conn.stream, host_probe.clone()));
                         } else {
                             attempted_counter.fetch_add(1, Ordering::Relaxed);
                             continue;
@@ -862,7 +901,7 @@ async fn run_bidirectional_saturation(
                                 .await
                                 {
                                     h1_probe_opt = Some(Http1Client::new(
-                                        new_conn.tls_stream,
+                                        new_conn.stream,
                                         host_probe.clone(),
                                     ));
                                 }
@@ -881,12 +920,9 @@ async fn run_bidirectional_saturation(
                         break;
                     }
                     attempted_counter.fetch_add(1, Ordering::Relaxed);
-                    match probe_client.dispatch_probe(&probe_flag).await {
-                        Ok((rtt, _)) => {
-                            let mut guard = probe_samples_target.lock().await;
-                            guard.push(rtt);
-                        }
-                        Err(_) => {}
+                    if let Ok((rtt, _)) = probe_client.dispatch_probe(&probe_flag).await {
+                        let mut guard = probe_samples_target.lock().await;
+                        guard.push(rtt);
                     }
                 }
             })
@@ -1032,6 +1068,7 @@ async fn run_bidirectional_saturation(
 struct PhaseConfig<'a> {
     host: &'a str,
     streams: usize,
+    connections: usize,
     duration: Duration,
     is_download: bool,
     suppress_ui: bool,
@@ -1056,8 +1093,25 @@ async fn run_phase_saturation(
 
     match client {
         ClientHandle::H2(h2) => {
-            for _ in 0..config.streams {
-                let send_req = h2.send_request.clone();
+            let mut conn_pool = vec![h2.send_request.clone()];
+            if config.connections > 1 {
+                for _ in 1..config.connections {
+                    if let Ok(conn) = connect_happy_eyeballs(
+                        config.host,
+                        config.candidates,
+                        config.specified_iface,
+                    )
+                    .await
+                        && let Ok(extra_h2) =
+                            H2Client::new(conn.stream, config.host.to_string()).await
+                    {
+                        conn_pool.push(extra_h2.send_request);
+                    }
+                }
+            }
+
+            for i in 0..config.streams {
+                let send_req = conn_pool[i % conn_pool.len()].clone();
                 let host_clone = config.host.to_string();
                 let candidates_clone = config.candidates.clone();
                 let iface_clone = config.specified_iface.map(|s| s.to_string());
@@ -1113,7 +1167,7 @@ async fn run_phase_saturation(
                             .await
                             {
                                 if let Ok(new_h2) =
-                                    H2Client::new(conn.tls_stream, host_clone.clone()).await
+                                    H2Client::new(conn.stream, host_clone.clone()).await
                                 {
                                     current_send_req = new_h2.send_request;
                                 }
@@ -1146,7 +1200,7 @@ async fn run_phase_saturation(
                         )
                         .await
                         {
-                            let h1_stream = Http1Client::new(conn.tls_stream, host_clone.clone());
+                            let h1_stream = Http1Client::new(conn.stream, host_clone.clone());
                             if is_down {
                                 let res = h1_stream
                                     .run_download_stream(
@@ -1186,8 +1240,17 @@ async fn run_phase_saturation(
             }
         }
         ClientHandle::H3(h3) => {
-            for _ in 0..config.streams {
-                let send_req = h3.send_request.clone();
+            let mut conn_pool = vec![h3.send_request.clone()];
+            if config.connections > 1 {
+                for _ in 1..config.connections {
+                    if let Ok(extra_h3) = H3Client::connect(config.host, config.candidates).await {
+                        conn_pool.push(extra_h3.send_request);
+                    }
+                }
+            }
+
+            for i in 0..config.streams {
+                let send_req = conn_pool[i % conn_pool.len()].clone();
                 let host_clone = config.host.to_string();
                 let candidates_clone = config.candidates.clone();
                 let bytes_counter = total_bytes.clone();
@@ -1287,7 +1350,7 @@ async fn run_phase_saturation(
                             )
                             .await
                                 && let Ok(new_h2) =
-                                    H2Client::new(conn.tls_stream, host_probe.clone()).await
+                                    H2Client::new(conn.stream, host_probe.clone()).await
                             {
                                 probe_client = new_h2;
                             }
@@ -1316,7 +1379,7 @@ async fn run_phase_saturation(
                         .await
                         {
                             h1_probe_opt =
-                                Some(Http1Client::new(conn.tls_stream, host_probe.clone()));
+                                Some(Http1Client::new(conn.stream, host_probe.clone()));
                         } else {
                             attempted_counter.fetch_add(1, Ordering::Relaxed);
                             continue;
@@ -1342,7 +1405,7 @@ async fn run_phase_saturation(
                                 .await
                                 {
                                     h1_probe_opt = Some(Http1Client::new(
-                                        new_conn.tls_stream,
+                                        new_conn.stream,
                                         host_probe.clone(),
                                     ));
                                 }

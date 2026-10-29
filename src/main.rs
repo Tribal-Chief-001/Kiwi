@@ -24,6 +24,18 @@ fn main() {
         }
     };
 
+    if cli.server {
+        let port = cli.port.unwrap_or(8080);
+        runtime.block_on(async {
+            setup_signal_handlers();
+            if let Err(e) = kiwi::engine::server::run_server(port).await {
+                eprintln!("[!] Kiwi daemon error: {}", e);
+                std::process::exit(1);
+            }
+        });
+        return;
+    }
+
     runtime.block_on(async {
         setup_signal_handlers();
 

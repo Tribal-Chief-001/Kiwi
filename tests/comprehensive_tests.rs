@@ -991,6 +991,9 @@ fn test_bidirectional_and_quic_cli_parsing() {
     assert!(!cli.is_json_effective());
     assert!(cli.is_plain_effective());
 
-    let cli_alias = Cli::parse_from(["kiwi", "--simultaneous"]);
+    let cli_alias = Cli::parse_from(["kiwi", "--simultaneous", "--server", "--port", "9090", "--connections", "4"]);
     assert!(cli_alias.bidirectional);
+    assert!(cli_alias.server);
+    assert_eq!(cli_alias.port, Some(9090));
+    assert_eq!(cli_alias.connections, 4);
 }

@@ -166,7 +166,13 @@ kiwi -I eth0
 kiwi -4
 kiwi -6
 
-# 13. Low-bandwidth / SSH mode (throttles UI to 10 FPS, simplified glyphs)
+# 13. Embedded speedtest daemon mode (iPerf3 / LibreSpeed parity for air-gapped LAN/WAN)
+kiwi --server --port 8080
+
+# 14. Target private LAN / custom server port
+kiwi --host 192.168.1.100 -p 8080
+
+# 15. Low-bandwidth / SSH mode (throttles UI to 10 FPS, simplified glyphs)
 kiwi --low-bandwidth
 ```
 

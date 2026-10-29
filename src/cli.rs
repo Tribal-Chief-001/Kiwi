@@ -53,9 +53,21 @@ pub struct Cli {
     #[arg(long, default_value = "4")]
     pub streams: usize,
 
+    /// Number of parallel TCP/TLS connections for multi-gigabit line saturation (default: 1)
+    #[arg(long, default_value = "1")]
+    pub connections: usize,
+
     /// Simultaneous bidirectional full-duplex saturation mode (Apple networkQuality parity)
     #[arg(long, visible_alias = "simultaneous")]
     pub bidirectional: bool,
+
+    /// Target server TCP port (default: 443 for HTTPS, or 8080 for --server)
+    #[arg(short = 'p', long = "port")]
+    pub port: Option<u16>,
+
+    /// Run Kiwi as an embedded speedtest benchmark server for private LAN / air-gapped testing
+    #[arg(long)]
+    pub server: bool,
 
     /// Output metrics in standard Prometheus exposition format (text 0.0.4)
     #[arg(long)]

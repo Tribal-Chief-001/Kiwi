@@ -335,6 +335,27 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     }
     out.push('\n');
 
+    let all_samples: Vec<f64> = report
+        .loaded_down_latency
+        .samples
+        .iter()
+        .chain(report.loaded_up_latency.samples.iter())
+        .copied()
+        .collect();
+    if !all_samples.is_empty() && width >= 66 {
+        let spark_width = 14;
+        let sparkline = crate::ui::braille::render_cdf_sparkline(&all_samples, spark_width);
+        let max_p90 = report.loaded_down_latency.p90_ms.max(report.loaded_up_latency.p90_ms);
+        let cdf_str = format!(
+            "CDF Distribution (p10..p99) : {}  Med: {:.1}ms · P90: {:.1}ms",
+            color_bold(&sparkline, CYBER_CYAN),
+            report.responsiveness.working_rtt_ms,
+            max_p90
+        );
+        out.push_str(&box_row(&format!("     {}", color_fg(&cdf_str, DIM_GRAY)), width));
+        out.push('\n');
+    }
+
     out.push_str(&box_bot(width));
     out.push('\n');
 

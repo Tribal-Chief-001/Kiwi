@@ -233,9 +233,54 @@ pub fn calculate_gauge_scale(peak_mbps: f64) -> f64 {
     ((peak_mbps / 1000.0).ceil() + 1.0) * 1000.0
 }
 
+/// Renders an empirical Cumulative Distribution Function (CDF) sparkline for latency samples.
+/// Uses block characters ` ▂▃▄▅▆▇█` to show the distribution profile from min to max.
+pub fn render_cdf_sparkline(samples: &[f64], width: usize) -> String {
+    if samples.is_empty() || width == 0 {
+        return String::new();
+    }
+    let mut sorted = samples
+        .iter()
+        .copied()
+        .filter(|s| s.is_finite() && *s >= 0.0)
+        .collect::<Vec<_>>();
+    if sorted.is_empty() {
+        return String::new();
+    }
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let min = sorted[0];
+    let max = sorted[sorted.len() - 1];
+    let range = (max - min).max(0.001);
+
+    let mut out = String::with_capacity(width * 4);
+    for i in 0..width {
+        let percentile_idx = if width > 1 {
+            (i * (sorted.len() - 1)) / (width - 1)
+        } else {
+            0
+        };
+        let val = sorted[percentile_idx];
+        let normalized = ((val - min) / range).clamp(0.0, 1.0);
+        let block_idx = ((normalized * 7.0).round() as usize).min(7);
+        out.push(blocks[block_idx]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_render_cdf_sparkline() {
+        let samples = vec![10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 50.0];
+        let sparkline = render_cdf_sparkline(&samples, 10);
+        assert_eq!(sparkline.chars().count(), 10);
+        assert!(sparkline.starts_with(' '));
+        assert!(sparkline.ends_with('█'));
+    }
 
     #[test]
     fn test_render_braille_canvas() {

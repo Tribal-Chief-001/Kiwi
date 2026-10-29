@@ -31,7 +31,8 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     }
 
     // 2. DNS Resolution via Happy Eyeballs candidates
-    let candidates = resolve_host(&cli.host, 443, cli.ipv4_only, cli.ipv6_only).await?;
+    let port = cli.port.unwrap_or(443);
+    let candidates = resolve_host(&cli.host, port, cli.ipv4_only, cli.ipv6_only).await?;
 
     // 3. Establish connection (HTTP/3 QUIC if --quic, else TCP + TLS with Happy Eyeballs)
     let (mut client, proto_desc, cold_start_ms) = if cli.quic {

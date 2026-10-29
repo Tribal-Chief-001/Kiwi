@@ -377,7 +377,7 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     let current_rss = ResourceProfile::current_rss_mb();
 
     let report = BenchmarkReport {
-        version: "1.0.0".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         timestamp: chrono_or_now(),
         target_host: cli.host.clone(),
         protocol: proto_desc,

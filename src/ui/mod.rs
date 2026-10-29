@@ -83,7 +83,10 @@ impl TerminalRenderer {
                 let brand = format!(
                     "🥝 {}  {}",
                     color_bold("KIWI", KIWI_EMERALD),
-                    color_fg("꘡ EDGE NETWORK INTELLIGENCE [v1.0.0]", CYBER_CYAN)
+                    color_fg(
+                        &format!("꘡ EDGE NETWORK INTELLIGENCE [v{}]", env!("CARGO_PKG_VERSION")),
+                        CYBER_CYAN
+                    )
                 );
                 buffer.push_str(&box_top(&brand, width));
                 buffer.push('\n');

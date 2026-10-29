@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 #[command(
     name = "kiwi",
     author = "Kiwi Engineering Team",
-    version = "1.0.0",
+    version = env!("CARGO_PKG_VERSION"),
     about = "🥝 State-of-the-Art Zero-Footprint 2026 CLI Network Intelligence Engine"
 )]
 pub struct Cli {

@@ -124,9 +124,10 @@ impl H3Client {
         let guard = ProbePendingGuard::activate(probe_pending);
         tokio::task::yield_now().await;
 
+        let path = crate::protocol::download_path(&self.host, 0);
         let req = Request::builder()
             .method(Method::GET)
-            .uri(format!("https://{}/__down?bytes=0", self.host))
+            .uri(format!("https://{}{}", self.host, path))
             .header("Host", &self.host)
             .header("User-Agent", "kiwi/1.0.0")
             .header("Accept", "*/*")
@@ -176,9 +177,10 @@ impl H3Client {
         let mut telemetry = None;
 
         while !stop_signal.load(Ordering::Relaxed) {
+            let path = crate::protocol::download_path(&host, bytes_to_fetch);
             let req = Request::builder()
                 .method(Method::GET)
-                .uri(format!("https://{}/__down?bytes={}", host, bytes_to_fetch))
+                .uri(format!("https://{}{}", host, path))
                 .header("Host", &host)
                 .header("User-Agent", "kiwi/1.0.0")
                 .header("Accept", "*/*")
@@ -256,9 +258,10 @@ impl H3Client {
         let chunk_size = 65536;
 
         while !stop_signal.load(Ordering::Relaxed) {
+            let path = crate::protocol::upload_path(&host);
             let req = Request::builder()
                 .method(Method::POST)
-                .uri(format!("https://{}/__up", host))
+                .uri(format!("https://{}{}", host, path))
                 .header("Host", &host)
                 .header("User-Agent", "kiwi/1.0.0")
                 .header("Content-Type", "application/octet-stream")

@@ -65,8 +65,8 @@ pub struct Cli {
     #[arg(long)]
     pub audit_isp: bool,
 
-    /// Secondary host for ISP neutrality audit comparison (defaults to speed.fastly.com)
-    #[arg(long, default_value = "speed.fastly.com")]
+    /// Secondary host for ISP neutrality audit comparison (defaults to speed.edgecompute.app)
+    #[arg(long, default_value = "speed.edgecompute.app")]
     pub audit_host: String,
 
     /// Export standalone vector SVG Bento receipt card to file path

@@ -30,3 +30,23 @@ impl<'a> Drop for ProbePendingGuard<'a> {
         self.flag.store(false, Ordering::Release);
     }
 }
+
+/// Returns the download path for a given host and byte count.
+/// Fastly / EdgeCompute endpoints use `/down?bytes=N`, whereas Cloudflare uses `/__down?bytes=N`.
+pub fn download_path(host: &str, bytes: u64) -> String {
+    if host.contains("fastly") || host.contains("edgecompute") {
+        format!("/down?bytes={}", bytes)
+    } else {
+        format!("/__down?bytes={}", bytes)
+    }
+}
+
+/// Returns the upload path for a given host.
+/// Fastly / EdgeCompute endpoints use `/up`, whereas Cloudflare uses `/__up`.
+pub fn upload_path(host: &str) -> &'static str {
+    if host.contains("fastly") || host.contains("edgecompute") {
+        "/up"
+    } else {
+        "/__up"
+    }
+}

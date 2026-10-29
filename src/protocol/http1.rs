@@ -65,9 +65,10 @@ impl Http1Client {
         let guard = ProbePendingGuard::activate(probe_pending);
         tokio::task::yield_now().await;
 
+        let path = crate::protocol::download_path(&self.host, 0);
         let req = format!(
-            "GET /__down?bytes=0 HTTP/1.1\r\nHost: {}\r\nUser-Agent: kiwi/1.0.0\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
-            self.host
+            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: kiwi/1.0.0\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
+            path, self.host
         );
 
         let start = Instant::now();
@@ -107,10 +108,11 @@ impl Http1Client {
         let mut telemetry = None;
         let mut sink = [0u8; 16384];
 
+        let path = crate::protocol::download_path(&self.host, bytes_per_req);
         while !stop_signal.load(Ordering::Relaxed) {
             let req = format!(
-                "GET /__down?bytes={} HTTP/1.1\r\nHost: {}\r\nUser-Agent: kiwi/1.0.0\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
-                bytes_per_req, self.host
+                "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: kiwi/1.0.0\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
+                path, self.host
             );
 
             if self.stream.write_all(req.as_bytes()).await.is_err() {
@@ -290,10 +292,11 @@ impl Http1Client {
         let req_size = 131072; // 128 KB per upload chunk request
         let chunk_size = 32768; // 32 KB write slices
 
+        let path = crate::protocol::upload_path(&self.host);
         while !stop_signal.load(Ordering::Relaxed) {
             let req_header = format!(
-                "POST /__up HTTP/1.1\r\nHost: {}\r\nUser-Agent: kiwi/1.0.0\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
-                self.host, req_size
+                "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: kiwi/1.0.0\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                path, self.host, req_size
             );
 
             if self.stream.write_all(req_header.as_bytes()).await.is_err() {

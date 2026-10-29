@@ -1,6 +1,6 @@
 [package]
 name = "kiwi"
-version = "0.1.0"
+version = "1.1.0"
 edition = "2024"
 authors = ["Tribal-Chief-001 <raffrajput123@gmail.com>"]
 description = "🥝 Ultra-fast, zero-footprint (<4MB RSS) cross-platform CLI network intelligence and speed test engine"

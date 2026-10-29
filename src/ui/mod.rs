@@ -84,7 +84,10 @@ impl TerminalRenderer {
                     "🥝 {}  {}",
                     color_bold("KIWI", KIWI_EMERALD),
                     color_fg(
-                        &format!("꘡ EDGE NETWORK INTELLIGENCE [v{}]", env!("CARGO_PKG_VERSION")),
+                        &format!(
+                            "꘡ EDGE NETWORK INTELLIGENCE [v{}]",
+                            env!("CARGO_PKG_VERSION")
+                        ),
                         CYBER_CYAN
                     )
                 );

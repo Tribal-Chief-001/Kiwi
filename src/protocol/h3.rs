@@ -19,10 +19,7 @@ pub struct H3Client {
 
 impl H3Client {
     /// Connects to host via HTTP/3 QUIC over UDP port 443 with 4.0s timeout guard.
-    pub async fn connect(
-        host: &str,
-        candidates: &DnsCandidates,
-    ) -> Result<Self, std::io::Error> {
+    pub async fn connect(host: &str, candidates: &DnsCandidates) -> Result<Self, std::io::Error> {
         let peer_addr = candidates
             .ipv6
             .first()
@@ -142,9 +139,10 @@ impl H3Client {
 
         drop(guard);
 
-        let resp = stream.recv_response().await.map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::TimedOut, format!("{:?}", e))
-        })?;
+        let resp = stream
+            .recv_response()
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::TimedOut, format!("{:?}", e)))?;
 
         let status = resp.status();
         let telemetry = parse_edge_telemetry(resp.headers());

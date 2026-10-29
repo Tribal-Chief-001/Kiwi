@@ -1,8 +1,8 @@
 use crate::cli::Cli;
 use crate::engine::probe::ClientHandle;
 use crate::metrics::{
-    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, IspAuditReport, LatencyStats, ResourceProfile,
-    ThroughputStats,
+    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, IspAuditReport, LatencyStats,
+    ResourceProfile, ThroughputStats,
 };
 use crate::platform::detect_platform_info;
 use crate::protocol::dns::{DnsCandidates, resolve_host};
@@ -54,7 +54,8 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
                         cli.host, e
                     );
                 }
-                let conn = connect_happy_eyeballs(&cli.host, &candidates, cli.interface.as_deref()).await?;
+                let conn = connect_happy_eyeballs(&cli.host, &candidates, cli.interface.as_deref())
+                    .await?;
                 let cold_start = bench_start.elapsed().as_secs_f64() * 1000.0;
                 let ip_family = if conn.is_ipv6 {
                     "Dual-Stack IPv6"
@@ -67,9 +68,18 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
                         .as_deref()
                         .map(|p| String::from_utf8_lossy(p).into_owned())
                         .unwrap_or_else(|| "http/1.1".to_string());
-                    format!("{} ({}) · {} over TLS 1.3", ip_family, conn.peer_addr.ip(), alpn)
+                    format!(
+                        "{} ({}) · {} over TLS 1.3",
+                        ip_family,
+                        conn.peer_addr.ip(),
+                        alpn
+                    )
                 } else {
-                    format!("{} ({}) · HTTP/1.1 (LAN / Plain)", ip_family, conn.peer_addr.ip())
+                    format!(
+                        "{} ({}) · HTTP/1.1 (LAN / Plain)",
+                        ip_family,
+                        conn.peer_addr.ip()
+                    )
                 };
                 let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
                 let client = if is_h2 {
@@ -94,9 +104,18 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
                 .as_deref()
                 .map(|p| String::from_utf8_lossy(p).into_owned())
                 .unwrap_or_else(|| "http/1.1".to_string());
-            format!("{} ({}) · {} over TLS 1.3", ip_family, conn.peer_addr.ip(), alpn)
+            format!(
+                "{} ({}) · {} over TLS 1.3",
+                ip_family,
+                conn.peer_addr.ip(),
+                alpn
+            )
         } else {
-            format!("{} ({}) · HTTP/1.1 (LAN / Plain)", ip_family, conn.peer_addr.ip())
+            format!(
+                "{} ({}) · HTTP/1.1 (LAN / Plain)",
+                ip_family,
+                conn.peer_addr.ip()
+            )
         };
         let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
         let client = if is_h2 {
@@ -175,7 +194,9 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
     }
 
     // 7. Phase 2 & 3: Saturation Tests (Simultaneous Full-Duplex or Sequential)
-    let (download_stats, upload_stats, loaded_down_latency, loaded_up_latency) = if cli.bidirectional {
+    let (download_stats, upload_stats, loaded_down_latency, loaded_up_latency) = if cli
+        .bidirectional
+    {
         ui_state.phase = TestPhase::Bidirectional;
         ui_state.active_streams = cli.streams * 2;
         ui_state.throughput_history.clear();
@@ -192,7 +213,8 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
             specified_iface: cli.interface.as_deref(),
         };
         let (d_stats, u_stats, loaded_lat, bidi_telem) =
-            run_bidirectional_saturation(&mut client, bidi_config, &mut ui_state, &mut renderer).await;
+            run_bidirectional_saturation(&mut client, bidi_config, &mut ui_state, &mut renderer)
+                .await;
 
         if let Some(t) = bidi_telem {
             merge_telemetry(&mut edge_telemetry, t);
@@ -202,9 +224,7 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
         if cli.plain && !is_json {
             println!(
                 "  ⚡ Full-Duplex Saturation: ↓{:.1} Mbps (Peak: {:.1}) / ↑{:.1} Mbps (Peak: {:.1}) · Loaded Latency: {:.1} ms",
-                d_stats.mbps, d_stats.peak_mbps,
-                u_stats.mbps, u_stats.peak_mbps,
-                loaded_lat.p90_ms
+                d_stats.mbps, d_stats.peak_mbps, u_stats.mbps, u_stats.peak_mbps, loaded_lat.p90_ms
             );
         }
 
@@ -258,10 +278,8 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
                     client = ClientHandle::H2(new_h2);
                 }
             } else {
-                client = ClientHandle::Http1(Box::new(Http1Client::new(
-                    conn.stream,
-                    cli.host.clone(),
-                )));
+                client =
+                    ClientHandle::Http1(Box::new(Http1Client::new(conn.stream, cli.host.clone())));
             }
         }
 
@@ -333,14 +351,20 @@ pub async fn run_benchmark(cli: &Cli) -> Result<BenchmarkReport, Box<dyn std::er
                 if cli.plain && !is_json {
                     println!(
                         "  ⚖️ ISP Neutrality Audit: {} (Ratio: {:.2})\n     Transit: {:.1} Mbps vs On-Net: {:.1} Mbps",
-                        audit_report.verdict, audit_report.neutrality_ratio, audit_report.anycast_download_mbps, audit_report.on_net_download_mbps
+                        audit_report.verdict,
+                        audit_report.neutrality_ratio,
+                        audit_report.anycast_download_mbps,
+                        audit_report.on_net_download_mbps
                     );
                 }
                 Some(audit_report)
             }
             Err(e) => {
                 if cli.plain && !is_json {
-                    eprintln!("  [!] ISP Neutrality Audit failed against {}: {}", cli.audit_host, e);
+                    eprintln!(
+                        "  [!] ISP Neutrality Audit failed against {}: {}",
+                        cli.audit_host, e
+                    );
                 }
                 None
             }
@@ -461,12 +485,16 @@ async fn run_audit_target(
     ui_state: &mut LiveUiState,
 ) -> Result<(f64, f64), Box<dyn std::error::Error>> {
     let audit_candidates = resolve_host(audit_host, 443, cli.ipv4_only, cli.ipv6_only).await?;
-    let conn = connect_happy_eyeballs(audit_host, &audit_candidates, cli.interface.as_deref()).await?;
+    let conn =
+        connect_happy_eyeballs(audit_host, &audit_candidates, cli.interface.as_deref()).await?;
     let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
     let mut audit_client = if is_h2 {
         ClientHandle::H2(H2Client::new(conn.stream, audit_host.to_string()).await?)
     } else {
-        ClientHandle::Http1(Box::new(Http1Client::new(conn.stream, audit_host.to_string())))
+        ClientHandle::Http1(Box::new(Http1Client::new(
+            conn.stream,
+            audit_host.to_string(),
+        )))
     };
 
     let probe_pending = Arc::new(AtomicBool::new(false));
@@ -504,7 +532,12 @@ async fn run_bidirectional_saturation(
     config: BidiPhaseConfig<'_>,
     ui_state: &mut LiveUiState,
     renderer: &mut TerminalRenderer,
-) -> (ThroughputStats, ThroughputStats, LatencyStats, Option<EdgeTelemetry>) {
+) -> (
+    ThroughputStats,
+    ThroughputStats,
+    LatencyStats,
+    Option<EdgeTelemetry>,
+) {
     let down_bytes = Arc::new(AtomicU64::new(0));
     let up_bytes = Arc::new(AtomicU64::new(0));
     let stop_signal = Arc::new(AtomicBool::new(false));
@@ -876,8 +909,7 @@ async fn run_bidirectional_saturation(
                         )
                         .await
                         {
-                            h1_probe_opt =
-                                Some(Http1Client::new(conn.stream, host_probe.clone()));
+                            h1_probe_opt = Some(Http1Client::new(conn.stream, host_probe.clone()));
                         } else {
                             attempted_counter.fetch_add(1, Ordering::Relaxed);
                             continue;
@@ -900,10 +932,8 @@ async fn run_bidirectional_saturation(
                                 )
                                 .await
                                 {
-                                    h1_probe_opt = Some(Http1Client::new(
-                                        new_conn.stream,
-                                        host_probe.clone(),
-                                    ));
+                                    h1_probe_opt =
+                                        Some(Http1Client::new(new_conn.stream, host_probe.clone()));
                                 }
                             }
                         }
@@ -1378,8 +1408,7 @@ async fn run_phase_saturation(
                         )
                         .await
                         {
-                            h1_probe_opt =
-                                Some(Http1Client::new(conn.stream, host_probe.clone()));
+                            h1_probe_opt = Some(Http1Client::new(conn.stream, host_probe.clone()));
                         } else {
                             attempted_counter.fetch_add(1, Ordering::Relaxed);
                             continue;
@@ -1404,10 +1433,8 @@ async fn run_phase_saturation(
                                 )
                                 .await
                                 {
-                                    h1_probe_opt = Some(Http1Client::new(
-                                        new_conn.stream,
-                                        host_probe.clone(),
-                                    ));
+                                    h1_probe_opt =
+                                        Some(Http1Client::new(new_conn.stream, host_probe.clone()));
                                 }
                             }
                         }

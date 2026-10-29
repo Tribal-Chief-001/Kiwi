@@ -33,10 +33,7 @@ pub struct H2Client {
 }
 
 impl H2Client {
-    pub async fn new(
-        stream: AnyStream,
-        host: String,
-    ) -> Result<Self, std::io::Error> {
+    pub async fn new(stream: AnyStream, host: String) -> Result<Self, std::io::Error> {
         let raw_fd = stream.raw_fd();
 
         let mut builder = Builder::new();

@@ -181,11 +181,17 @@ pub fn render_svg_card(report: &BenchmarkReport) -> String {
         down_mbps = report.download.mbps,
         down_peak = report.download.peak_mbps,
         down_mb = report.download.total_bytes as f64 / (1024.0 * 1024.0),
-        down_bar_width = ((report.download.mbps / report.download.peak_mbps.max(report.download.mbps).max(1.0)) * 305.0).clamp(5.0, 305.0),
+        down_bar_width = ((report.download.mbps
+            / report.download.peak_mbps.max(report.download.mbps).max(1.0))
+            * 305.0)
+            .clamp(5.0, 305.0),
         up_mbps = report.upload.mbps,
         up_peak = report.upload.peak_mbps,
         up_mb = report.upload.total_bytes as f64 / (1024.0 * 1024.0),
-        up_bar_width = ((report.upload.mbps / report.upload.peak_mbps.max(report.upload.mbps).max(1.0)) * 305.0).clamp(5.0, 305.0),
+        up_bar_width = ((report.upload.mbps
+            / report.upload.peak_mbps.max(report.upload.mbps).max(1.0))
+            * 305.0)
+            .clamp(5.0, 305.0),
         idle_ms = report.idle_latency.median_ms,
         jitter = report.idle_latency.jitter_ms,
         working_ms = report.responsiveness.working_rtt_ms,

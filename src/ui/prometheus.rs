@@ -7,21 +7,27 @@ pub fn format_prometheus(report: &BenchmarkReport) -> String {
     let iface = &report.platform.interface_name;
 
     // Download metrics
-    out.push_str("# HELP kiwi_download_mbps Saturated download throughput in megabits per second\n");
+    out.push_str(
+        "# HELP kiwi_download_mbps Saturated download throughput in megabits per second\n",
+    );
     out.push_str("# TYPE kiwi_download_mbps gauge\n");
     out.push_str(&format!(
         "kiwi_download_mbps{{target=\"{}\",interface=\"{}\"}} {:.2}\n",
         host, iface, report.download.mbps
     ));
 
-    out.push_str("# HELP kiwi_download_peak_mbps Peak download throughput in megabits per second\n");
+    out.push_str(
+        "# HELP kiwi_download_peak_mbps Peak download throughput in megabits per second\n",
+    );
     out.push_str("# TYPE kiwi_download_peak_mbps gauge\n");
     out.push_str(&format!(
         "kiwi_download_peak_mbps{{target=\"{}\"}} {:.2}\n",
         host, report.download.peak_mbps
     ));
 
-    out.push_str("# HELP kiwi_download_bytes_total Total bytes transferred during download phase\n");
+    out.push_str(
+        "# HELP kiwi_download_bytes_total Total bytes transferred during download phase\n",
+    );
     out.push_str("# TYPE kiwi_download_bytes_total counter\n");
     out.push_str(&format!(
         "kiwi_download_bytes_total{{target=\"{}\"}} {}\n",
@@ -73,7 +79,9 @@ pub fn format_prometheus(report: &BenchmarkReport) -> String {
     ));
 
     // Loaded Working Latencies
-    out.push_str("# HELP kiwi_loaded_down_latency_ms Loaded download P90 latency in milliseconds\n");
+    out.push_str(
+        "# HELP kiwi_loaded_down_latency_ms Loaded download P90 latency in milliseconds\n",
+    );
     out.push_str("# TYPE kiwi_loaded_down_latency_ms gauge\n");
     out.push_str(&format!(
         "kiwi_loaded_down_latency_ms{{target=\"{}\"}} {:.2}\n",
@@ -88,14 +96,18 @@ pub fn format_prometheus(report: &BenchmarkReport) -> String {
     ));
 
     // Apple RPM Responsiveness & Bufferbloat Grade
-    out.push_str("# HELP kiwi_bufferbloat_rpm Apple Round-trips Per Minute responsiveness under load\n");
+    out.push_str(
+        "# HELP kiwi_bufferbloat_rpm Apple Round-trips Per Minute responsiveness under load\n",
+    );
     out.push_str("# TYPE kiwi_bufferbloat_rpm gauge\n");
     out.push_str(&format!(
         "kiwi_bufferbloat_rpm{{grade=\"{}\",rating=\"{}\"}} {}\n",
         report.responsiveness.grade, report.responsiveness.rating_label, report.responsiveness.rpm
     ));
 
-    out.push_str("# HELP kiwi_bufferbloat_delta_ms Bufferbloat working latency delta in milliseconds\n");
+    out.push_str(
+        "# HELP kiwi_bufferbloat_delta_ms Bufferbloat working latency delta in milliseconds\n",
+    );
     out.push_str("# TYPE kiwi_bufferbloat_delta_ms gauge\n");
     out.push_str(&format!(
         "kiwi_bufferbloat_delta_ms{{target=\"{}\"}} {:.2}\n",
@@ -129,12 +141,16 @@ pub fn format_prometheus(report: &BenchmarkReport) -> String {
         out.push_str(&format!("kiwi_tcp_retransmissions {}\n", retrans));
     }
     if let Some(rtt) = report.edge.cf_l4_rtt_us {
-        out.push_str("# HELP kiwi_tcp_rtt_microseconds TCP smoothed round-trip time in microseconds\n");
+        out.push_str(
+            "# HELP kiwi_tcp_rtt_microseconds TCP smoothed round-trip time in microseconds\n",
+        );
         out.push_str("# TYPE kiwi_tcp_rtt_microseconds gauge\n");
         out.push_str(&format!("kiwi_tcp_rtt_microseconds {}\n", rtt));
     }
     if let Some(min_rtt) = report.edge.cf_l4_min_rtt_us {
-        out.push_str("# HELP kiwi_tcp_min_rtt_microseconds TCP minimum round-trip time in microseconds\n");
+        out.push_str(
+            "# HELP kiwi_tcp_min_rtt_microseconds TCP minimum round-trip time in microseconds\n",
+        );
         out.push_str("# TYPE kiwi_tcp_min_rtt_microseconds gauge\n");
         out.push_str(&format!("kiwi_tcp_min_rtt_microseconds {}\n", min_rtt));
     }
@@ -146,16 +162,24 @@ pub fn format_prometheus(report: &BenchmarkReport) -> String {
 
         out.push_str("# HELP kiwi_kernel_tcp_rtt_microseconds Smoothed RTT sampled directly from OS kernel socket\n");
         out.push_str("# TYPE kiwi_kernel_tcp_rtt_microseconds gauge\n");
-        out.push_str(&format!("kiwi_kernel_tcp_rtt_microseconds {}\n", ktcp.rtt_us));
+        out.push_str(&format!(
+            "kiwi_kernel_tcp_rtt_microseconds {}\n",
+            ktcp.rtt_us
+        ));
 
         out.push_str("# HELP kiwi_kernel_tcp_retransmissions Retransmissions sampled directly from OS kernel socket\n");
         out.push_str("# TYPE kiwi_kernel_tcp_retransmissions gauge\n");
-        out.push_str(&format!("kiwi_kernel_tcp_retransmissions {}\n", ktcp.retrans));
+        out.push_str(&format!(
+            "kiwi_kernel_tcp_retransmissions {}\n",
+            ktcp.retrans
+        ));
     }
 
     // ISP Neutrality Audit
     if let Some(ref audit) = report.isp_audit {
-        out.push_str("# HELP kiwi_isp_neutrality_ratio ISP speedtest neutrality ratio (Anycast / On-Net)\n");
+        out.push_str(
+            "# HELP kiwi_isp_neutrality_ratio ISP speedtest neutrality ratio (Anycast / On-Net)\n",
+        );
         out.push_str("# TYPE kiwi_isp_neutrality_ratio gauge\n");
         out.push_str(&format!(
             "kiwi_isp_neutrality_ratio{{verdict=\"{}\"}} {:.4}\n",
@@ -185,7 +209,9 @@ pub fn format_prometheus(report: &BenchmarkReport) -> String {
     }
 
     // Process & System Footprint
-    out.push_str("# HELP kiwi_cold_start_seconds Process cold start initialization time in seconds\n");
+    out.push_str(
+        "# HELP kiwi_cold_start_seconds Process cold start initialization time in seconds\n",
+    );
     out.push_str("# TYPE kiwi_cold_start_seconds gauge\n");
     out.push_str(&format!(
         "kiwi_cold_start_seconds {:.6}\n",

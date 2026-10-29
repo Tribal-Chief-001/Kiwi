@@ -251,7 +251,10 @@ impl IspAuditReport {
                 "AGGRESSIVE SHAPING / CHEATING".to_string(),
                 format!(
                     "Neutrality Ratio {:.2} (< 0.65). Severe ISP QoS bias detected! ISP delivers {:.1} Mbps on-net but only {:.1} Mbps for global transit ({:.1}% throughput drop).",
-                    ratio, on_net_mbps, anycast_mbps, (1.0 - ratio) * 100.0
+                    ratio,
+                    on_net_mbps,
+                    anycast_mbps,
+                    (1.0 - ratio) * 100.0
                 ),
             )
         };

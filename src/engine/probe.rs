@@ -118,7 +118,9 @@ pub async fn run_idle_latency_test_with_progress(
                         }
                     }
                     _ => {
-                        if let Ok(conn) = connect_happy_eyeballs(host, candidates, specified_iface).await {
+                        if let Ok(conn) =
+                            connect_happy_eyeballs(host, candidates, specified_iface).await
+                        {
                             let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
                             if is_h2 {
                                 if let Ok(h2) = H2Client::new(conn.stream, host.to_string()).await {

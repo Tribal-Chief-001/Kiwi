@@ -753,19 +753,40 @@ fn test_bento_box_responsive_narrow_and_ultrawide() {
 #[test]
 fn test_isp_speedtest_neutrality_audit_grading() {
     // 1. Honest routing: ratio >= 0.85
-    let honest = IspAuditReport::compute("speed.fastly.com", 480.0, 18.0, "speed.cloudflare.com", 500.0, 16.0);
+    let honest = IspAuditReport::compute(
+        "speed.fastly.com",
+        480.0,
+        18.0,
+        "speed.cloudflare.com",
+        500.0,
+        16.0,
+    );
     assert!(!honest.is_throttled);
     assert_eq!(honest.verdict, "NEUTRAL · HONEST ROUTING");
     assert!(honest.neutrality_ratio >= 0.85);
 
     // 2. Mild shaping: ratio between 0.65 and 0.84
-    let mild = IspAuditReport::compute("speed.fastly.com", 350.0, 25.0, "speed.cloudflare.com", 500.0, 15.0);
+    let mild = IspAuditReport::compute(
+        "speed.fastly.com",
+        350.0,
+        25.0,
+        "speed.cloudflare.com",
+        500.0,
+        15.0,
+    );
     assert!(!mild.is_throttled);
     assert_eq!(mild.verdict, "MILD PEERING SHAPING");
     assert!(mild.neutrality_ratio >= 0.65 && mild.neutrality_ratio < 0.85);
 
     // 3. Aggressive shaping / cheating: ratio < 0.65
-    let cheated = IspAuditReport::compute("speed.fastly.com", 150.0, 45.0, "speed.cloudflare.com", 600.0, 12.0);
+    let cheated = IspAuditReport::compute(
+        "speed.fastly.com",
+        150.0,
+        45.0,
+        "speed.cloudflare.com",
+        600.0,
+        12.0,
+    );
     assert!(cheated.is_throttled);
     assert_eq!(cheated.verdict, "AGGRESSIVE SHAPING / CHEATING");
     assert!(cheated.neutrality_ratio < 0.65);
@@ -983,7 +1004,13 @@ fn test_vector_svg_receipt_export() {
 
 #[test]
 fn test_bidirectional_and_quic_cli_parsing() {
-    let cli = Cli::parse_from(["kiwi", "--bidirectional", "--quic", "--prometheus", "--audit-isp"]);
+    let cli = Cli::parse_from([
+        "kiwi",
+        "--bidirectional",
+        "--quic",
+        "--prometheus",
+        "--audit-isp",
+    ]);
     assert!(cli.bidirectional);
     assert!(cli.quic);
     assert!(cli.prometheus);
@@ -991,7 +1018,15 @@ fn test_bidirectional_and_quic_cli_parsing() {
     assert!(!cli.is_json_effective());
     assert!(cli.is_plain_effective());
 
-    let cli_alias = Cli::parse_from(["kiwi", "--simultaneous", "--server", "--port", "9090", "--connections", "4"]);
+    let cli_alias = Cli::parse_from([
+        "kiwi",
+        "--simultaneous",
+        "--server",
+        "--port",
+        "9090",
+        "--connections",
+        "4",
+    ]);
     assert!(cli_alias.bidirectional);
     assert!(cli_alias.server);
     assert_eq!(cli_alias.port, Some(9090));
@@ -1047,7 +1082,8 @@ async fn test_server_daemon_down_and_up_loopback() {
     assert!(up_resp_str.contains("OK"));
 
     // 3. Test GET /down byte ceiling safety cap (max 1 GB per request)
-    let req_huge = "GET /down?bytes=999999999999 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    let req_huge =
+        "GET /down?bytes=999999999999 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
     stream.write_all(req_huge.as_bytes()).await.unwrap();
     let mut huge_buf = [0u8; 2048];
     let n = stream.read(&mut huge_buf).await.unwrap();

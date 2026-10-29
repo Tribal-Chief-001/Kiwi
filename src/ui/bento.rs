@@ -345,14 +345,20 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     if !all_samples.is_empty() && width >= 66 {
         let spark_width = 14;
         let sparkline = crate::ui::braille::render_cdf_sparkline(&all_samples, spark_width);
-        let max_p90 = report.loaded_down_latency.p90_ms.max(report.loaded_up_latency.p90_ms);
+        let max_p90 = report
+            .loaded_down_latency
+            .p90_ms
+            .max(report.loaded_up_latency.p90_ms);
         let cdf_str = format!(
             "CDF Distribution (p10..p99) : {}  Med: {:.1}ms · P90: {:.1}ms",
             color_bold(&sparkline, CYBER_CYAN),
             report.responsiveness.working_rtt_ms,
             max_p90
         );
-        out.push_str(&box_row(&format!("     {}", color_fg(&cdf_str, DIM_GRAY)), width));
+        out.push_str(&box_row(
+            &format!("     {}", color_fg(&cdf_str, DIM_GRAY)),
+            width,
+        ));
         out.push('\n');
     }
 
@@ -471,17 +477,26 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
         let ratio_str = format!("Neutrality Ratio: {:.2}", audit.neutrality_ratio);
 
         out.push_str(&box_row(
-            &format!("  {}   {}", verdict_pill, color_bold(&ratio_str, BRIGHT_WHITE)),
+            &format!(
+                "  {}   {}",
+                verdict_pill,
+                color_bold(&ratio_str, BRIGHT_WHITE)
+            ),
             width,
         ));
         out.push('\n');
 
         let speeds_str = format!(
             "Transit: {:.1} Mbps ({}) · On-Net: {:.1} Mbps ({})",
-            audit.anycast_download_mbps, audit.anycast_host,
-            audit.on_net_download_mbps, audit.on_net_host,
+            audit.anycast_download_mbps,
+            audit.anycast_host,
+            audit.on_net_download_mbps,
+            audit.on_net_host,
         );
-        out.push_str(&box_row(&format!("  {}", color_fg(&speeds_str, DIM_GRAY)), width));
+        out.push_str(&box_row(
+            &format!("  {}", color_fg(&speeds_str, DIM_GRAY)),
+            width,
+        ));
         out.push('\n');
 
         let analysis_wrapped = format!("Analysis: {}", audit.analysis);

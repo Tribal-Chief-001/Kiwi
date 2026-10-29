@@ -35,4 +35,3 @@ pub fn apply_socket_optimizations<S>(_socket: &S, _specified_iface: Option<&str>
 pub fn read_tcp_info(_fd: i32) -> Option<crate::metrics::KernelTcpInfo> {
     None
 }
-

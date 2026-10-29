@@ -125,8 +125,7 @@ pub fn setup_signal_handlers() {
         {
             if tokio::signal::ctrl_c().await.is_ok() {
                 restore_terminal();
-                let _ =
-                    std::io::stderr().write_all(b"\n[!] Kiwi aborted by user signal.\n");
+                let _ = std::io::stderr().write_all(b"\n[!] Kiwi aborted by user signal.\n");
                 let _ = std::io::stderr().flush();
                 std::process::exit(130);
             }

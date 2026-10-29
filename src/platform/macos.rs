@@ -103,4 +103,3 @@ pub fn read_tcp_info(fd: RawFd) -> Option<KernelTcpInfo> {
         }
     }
 }
-

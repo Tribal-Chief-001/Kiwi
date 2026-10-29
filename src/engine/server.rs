@@ -9,7 +9,10 @@ pub async fn run_server(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
     let listener = TcpListener::bind(bind_addr).await?;
 
-    println!("🥝 KIWI DAEMON: Embedded speedtest engine running on http://{}", bind_addr);
+    println!(
+        "🥝 KIWI DAEMON: Embedded speedtest engine running on http://{}",
+        bind_addr
+    );
     println!("   Parity: iPerf3 / LibreSpeed private benchmark server");
     println!("   Endpoints: GET /down?bytes=N, POST /up, GET /health");
     println!("   To test: kiwi --host <this-ip> --port {} --plain", port);
@@ -34,7 +37,9 @@ async fn handle_client(
     let mut header_buf = vec![0u8; 8192];
     loop {
         // Read headers with an idle timeout of 30 seconds
-        let n = match tokio::time::timeout(Duration::from_secs(30), stream.read(&mut header_buf)).await {
+        let n = match tokio::time::timeout(Duration::from_secs(30), stream.read(&mut header_buf))
+            .await
+        {
             Ok(Ok(n)) if n > 0 => n,
             _ => break,
         };
@@ -67,8 +72,14 @@ async fn handle_client(
             // Parse requested bytes, capped at 1 GB per request
             let bytes_to_send: u64 = if let Some(query_start) = first_line.find("bytes=") {
                 let rest = &first_line[query_start + 6..];
-                let num_str = rest.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("0");
-                num_str.parse::<u64>().unwrap_or(10_000_000).min(1_000_000_000)
+                let num_str = rest
+                    .split(|c: char| !c.is_ascii_digit())
+                    .next()
+                    .unwrap_or("0");
+                num_str
+                    .parse::<u64>()
+                    .unwrap_or(10_000_000)
+                    .min(1_000_000_000)
             } else {
                 10_000_000
             };

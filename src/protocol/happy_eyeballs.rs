@@ -13,11 +13,15 @@ const TLS_HANDSHAKE_GUARD_DURATION: Duration = Duration::from_millis(500);
 const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
+
 pub struct EstablishedConnection {
     pub tls_stream: TlsStream<TcpStream>,
     pub peer_addr: SocketAddr,
     pub is_ipv6: bool,
     pub alpn: Option<Vec<u8>>,
+    pub raw_fd: Option<i32>,
 }
 
 /// Connects to a target host using Happy Eyeballs v2 (RFC 8305) with 500ms TLS Handshake Guard.
@@ -48,11 +52,16 @@ pub async fn connect_happy_eyeballs(
         {
             Ok(Ok(tls_stream)) => {
                 let alpn = tls_stream.get_ref().1.alpn_protocol().map(|p| p.to_vec());
+                #[cfg(unix)]
+                let raw_fd = Some(tls_stream.get_ref().0.as_raw_fd());
+                #[cfg(not(unix))]
+                let raw_fd = None;
                 Ok(EstablishedConnection {
                     tls_stream,
                     peer_addr,
                     is_ipv6: true,
                     alpn,
+                    raw_fd,
                 })
             }
             Ok(Err(_)) | Err(_) => {
@@ -71,11 +80,16 @@ pub async fn connect_happy_eyeballs(
                     )
                 })??;
                 let alpn = v4_tls.get_ref().1.alpn_protocol().map(|p| p.to_vec());
+                #[cfg(unix)]
+                let raw_fd = Some(v4_tls.get_ref().0.as_raw_fd());
+                #[cfg(not(unix))]
+                let raw_fd = None;
                 Ok(EstablishedConnection {
                     tls_stream: v4_tls,
                     peer_addr: v4_addr,
                     is_ipv6: false,
                     alpn,
+                    raw_fd,
                 })
             }
         }
@@ -93,11 +107,16 @@ pub async fn connect_happy_eyeballs(
             )
         })??;
         let alpn = tls_stream.get_ref().1.alpn_protocol().map(|p| p.to_vec());
+        #[cfg(unix)]
+        let raw_fd = Some(tls_stream.get_ref().0.as_raw_fd());
+        #[cfg(not(unix))]
+        let raw_fd = None;
         Ok(EstablishedConnection {
             tls_stream,
             peer_addr,
             is_ipv6,
             alpn,
+            raw_fd,
         })
     }
 }

@@ -426,6 +426,60 @@ pub fn render_bento_box(report: &BenchmarkReport, term_cols: usize) -> String {
     out.push_str(&box_bot(width));
     out.push('\n');
 
+    // ─── CARD 5: ISP SPEEDTEST NEUTRALITY AUDIT (if enabled) ────────────────
+    if let Some(ref audit) = report.isp_audit {
+        let audit_title = format!(
+            "⚖️ {}",
+            gradient_text(
+                "ISP SPEEDTEST NEUTRALITY & ROUTING AUDIT",
+                &[(0.0, ELECTRIC_AMBER), (1.0, KIWI_EMERALD)]
+            )
+        );
+        out.push_str(&box_top(&audit_title, width));
+        out.push('\n');
+
+        let (verdict_color, verdict_badge_text) = if audit.is_throttled {
+            (NEON_MAGENTA, "AGGRESSIVE SHAPING / CHEATING")
+        } else if audit.neutrality_ratio >= 0.85 {
+            (KIWI_EMERALD, "NEUTRAL · HONEST ROUTING")
+        } else {
+            (ELECTRIC_AMBER, "MILD PEERING SHAPING")
+        };
+
+        let verdict_pill = pill_badge(verdict_badge_text, verdict_color);
+        let ratio_str = format!("Neutrality Ratio: {:.2}", audit.neutrality_ratio);
+
+        out.push_str(&box_row(
+            &format!("  {}   {}", verdict_pill, color_bold(&ratio_str, BRIGHT_WHITE)),
+            width,
+        ));
+        out.push('\n');
+
+        let speeds_str = format!(
+            "Transit: {:.1} Mbps ({}) · On-Net: {:.1} Mbps ({})",
+            audit.anycast_download_mbps, audit.anycast_host,
+            audit.on_net_download_mbps, audit.on_net_host,
+        );
+        out.push_str(&box_row(&format!("  {}", color_fg(&speeds_str, DIM_GRAY)), width));
+        out.push('\n');
+
+        let analysis_wrapped = format!("Analysis: {}", audit.analysis);
+        let max_len = width.saturating_sub(6);
+        let display_analysis = if analysis_wrapped.len() > max_len {
+            format!("{}...", &analysis_wrapped[..max_len.saturating_sub(3)])
+        } else {
+            analysis_wrapped
+        };
+        out.push_str(&box_row(
+            &format!("  {}", color_fg(&display_analysis, BRIGHT_WHITE)),
+            width,
+        ));
+        out.push('\n');
+
+        out.push_str(&box_bot(width));
+        out.push('\n');
+    }
+
     out
 }
 

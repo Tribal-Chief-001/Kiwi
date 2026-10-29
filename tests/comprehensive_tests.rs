@@ -2,8 +2,8 @@ use clap::Parser;
 use http::{HeaderMap, HeaderValue};
 use kiwi::cli::Cli;
 use kiwi::metrics::{
-    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, PlatformInfo, ResourceProfile,
-    ThroughputStats,
+    BenchmarkReport, BufferbloatGrade, EdgeTelemetry, IspAuditReport, KernelTcpInfo, LatencyStats,
+    PlatformInfo, ResourceProfile, ThroughputStats,
 };
 use kiwi::platform::{is_virtual_interface, is_wireless_interface};
 use kiwi::protocol::telemetry::parse_edge_telemetry;
@@ -201,6 +201,7 @@ fn test_bento_box_receipt_rendering() {
         timestamp: "Unix(1793094558)".to_string(),
         target_host: "speed.cloudflare.com".to_string(),
         protocol: "Dual-Stack IPv6 · h2 over TLS 1.3".to_string(),
+        is_bidirectional: false,
         edge: EdgeTelemetry {
             colo: "BOM".to_string(),
             asn: Some(55836),
@@ -213,6 +214,7 @@ fn test_bento_box_receipt_rendering() {
             cf_l4_cwnd: Some(53),
             cf_l4_retrans: Some(0),
             cf_l4_delivery_rate: Some(73129),
+            kernel_tcp: None,
         },
         idle_latency: LatencyStats {
             min_ms: 28.4,
@@ -273,6 +275,7 @@ fn test_bento_box_receipt_rendering() {
             peak_rss_mb: 3.6,
             duration_secs: 6.4,
         },
+        isp_audit: None,
     };
 
     let bento = render_bento_box(&report, 86);
@@ -630,6 +633,7 @@ fn test_bento_box_responsive_narrow_and_ultrawide() {
         timestamp: "Unix(1793094558)".to_string(),
         target_host: "speed.cloudflare.com".to_string(),
         protocol: "Dual-Stack IPv6 · h2 over TLS 1.3".to_string(),
+        is_bidirectional: false,
         edge: EdgeTelemetry {
             colo: "BOM".to_string(),
             asn: Some(55836),
@@ -642,6 +646,7 @@ fn test_bento_box_responsive_narrow_and_ultrawide() {
             cf_l4_cwnd: Some(53),
             cf_l4_retrans: Some(0),
             cf_l4_delivery_rate: Some(73129),
+            kernel_tcp: None,
         },
         idle_latency: LatencyStats {
             min_ms: 28.4,
@@ -702,6 +707,7 @@ fn test_bento_box_responsive_narrow_and_ultrawide() {
             peak_rss_mb: 3.6,
             duration_secs: 6.4,
         },
+        isp_audit: None,
     };
 
     // Test extreme narrow viewport: 40 columns (mobile Termux split pane)
@@ -742,4 +748,249 @@ fn test_bento_box_responsive_narrow_and_ultrawide() {
             );
         }
     }
+}
+
+#[test]
+fn test_isp_speedtest_neutrality_audit_grading() {
+    // 1. Honest routing: ratio >= 0.85
+    let honest = IspAuditReport::compute("speed.fastly.com", 480.0, 18.0, "speed.cloudflare.com", 500.0, 16.0);
+    assert!(!honest.is_throttled);
+    assert_eq!(honest.verdict, "NEUTRAL · HONEST ROUTING");
+    assert!(honest.neutrality_ratio >= 0.85);
+
+    // 2. Mild shaping: ratio between 0.65 and 0.84
+    let mild = IspAuditReport::compute("speed.fastly.com", 350.0, 25.0, "speed.cloudflare.com", 500.0, 15.0);
+    assert!(!mild.is_throttled);
+    assert_eq!(mild.verdict, "MILD PEERING SHAPING");
+    assert!(mild.neutrality_ratio >= 0.65 && mild.neutrality_ratio < 0.85);
+
+    // 3. Aggressive shaping / cheating: ratio < 0.65
+    let cheated = IspAuditReport::compute("speed.fastly.com", 150.0, 45.0, "speed.cloudflare.com", 600.0, 12.0);
+    assert!(cheated.is_throttled);
+    assert_eq!(cheated.verdict, "AGGRESSIVE SHAPING / CHEATING");
+    assert!(cheated.neutrality_ratio < 0.65);
+    assert!(cheated.analysis.contains("Severe ISP QoS bias"));
+}
+
+#[test]
+fn test_prometheus_metrics_exposition() {
+    let report = BenchmarkReport {
+        version: "1.0.0".to_string(),
+        timestamp: "Unix(1793094558)".to_string(),
+        target_host: "speed.cloudflare.com".to_string(),
+        protocol: "IPv4 (104.16.1.1) · h2 over TLS 1.3".to_string(),
+        is_bidirectional: false,
+        edge: EdgeTelemetry {
+            colo: "FRA".to_string(),
+            asn: Some(13335),
+            city: "Frankfurt".to_string(),
+            country: "DE".to_string(),
+            client_ip: "198.51.100.1".to_string(),
+            cf_l4_proto: Some("TCP".to_string()),
+            cf_l4_rtt_us: Some(15000),
+            cf_l4_min_rtt_us: Some(14000),
+            cf_l4_cwnd: Some(42),
+            cf_l4_retrans: Some(1),
+            cf_l4_delivery_rate: Some(120000),
+            kernel_tcp: Some(KernelTcpInfo {
+                rtt_us: 15200,
+                min_rtt_us: 14100,
+                snd_cwnd: 45,
+                retrans: 1,
+                total_retrans: 2,
+                delivery_rate_bps: Some(950_000_000),
+            }),
+        },
+        idle_latency: LatencyStats {
+            min_ms: 14.0,
+            median_ms: 15.0,
+            p90_ms: 16.0,
+            jitter_ms: 0.5,
+            samples: vec![14.0, 15.0, 16.0],
+            packet_loss_pct: 0.0,
+        },
+        download: ThroughputStats {
+            bps: 850_000_000.0,
+            mbps: 850.0,
+            peak_mbps: 910.0,
+            total_bytes: 500_000_000,
+            duration_secs: 5.0,
+            history: vec![800.0, 850.0],
+        },
+        loaded_down_latency: LatencyStats {
+            min_ms: 16.0,
+            median_ms: 18.0,
+            p90_ms: 19.5,
+            jitter_ms: 0.8,
+            samples: vec![18.0, 19.5],
+            packet_loss_pct: 0.0,
+        },
+        upload: ThroughputStats {
+            bps: 200_000_000.0,
+            mbps: 200.0,
+            peak_mbps: 215.0,
+            total_bytes: 125_000_000,
+            duration_secs: 5.0,
+            history: vec![190.0, 200.0],
+        },
+        loaded_up_latency: LatencyStats {
+            min_ms: 18.0,
+            median_ms: 20.0,
+            p90_ms: 22.0,
+            jitter_ms: 1.1,
+            samples: vec![20.0, 22.0],
+            packet_loss_pct: 0.0,
+        },
+        responsiveness: BufferbloatGrade {
+            grade: "A+".to_string(),
+            rpm: 2100,
+            working_rtt_ms: 19.5,
+            delta_ms: 4.5,
+            rating_label: "ULTRA RESPONSIVE".to_string(),
+        },
+        platform: PlatformInfo {
+            interface_name: "eth0".to_string(),
+            link_speed_mbps: Some(1000),
+            link_type: "Gigabit Ethernet".to_string(),
+            is_virtual: false,
+            bottleneck_warning: None,
+        },
+        resources: ResourceProfile {
+            cold_start_ms: 2.8,
+            peak_rss_mb: 3.4,
+            duration_secs: 10.2,
+        },
+        isp_audit: None,
+    };
+
+    let prom = kiwi::ui::prometheus::format_prometheus(&report);
+    assert!(prom.contains("kiwi_download_mbps{"));
+    assert!(prom.contains("850.00"));
+    assert!(prom.contains("kiwi_upload_mbps{"));
+    assert!(prom.contains("200.00"));
+    assert!(prom.contains("kiwi_idle_latency_ms{"));
+    assert!(prom.contains("15.00"));
+    assert!(prom.contains("kiwi_bufferbloat_rpm{"));
+    assert!(prom.contains("2100"));
+    assert!(prom.contains("kiwi_responsiveness_grade{"));
+    assert!(prom.contains("grade=\"A+\""));
+    assert!(prom.contains("kiwi_kernel_tcp_cwnd 45"));
+}
+
+#[test]
+fn test_vector_svg_receipt_export() {
+    let report = BenchmarkReport {
+        version: "1.0.0".to_string(),
+        timestamp: "Unix(1793094558)".to_string(),
+        target_host: "speed.cloudflare.com".to_string(),
+        protocol: "Dual-Stack IPv6 · h2 over TLS 1.3".to_string(),
+        is_bidirectional: true,
+        edge: EdgeTelemetry {
+            colo: "LHR".to_string(),
+            asn: Some(13335),
+            city: "London".to_string(),
+            country: "GB".to_string(),
+            client_ip: "2001:db8::1".to_string(),
+            cf_l4_proto: Some("TCP".to_string()),
+            cf_l4_rtt_us: Some(12000),
+            cf_l4_min_rtt_us: Some(11000),
+            cf_l4_cwnd: Some(60),
+            cf_l4_retrans: Some(0),
+            cf_l4_delivery_rate: Some(150000),
+            kernel_tcp: None,
+        },
+        idle_latency: LatencyStats {
+            min_ms: 11.0,
+            median_ms: 12.0,
+            p90_ms: 12.8,
+            jitter_ms: 0.3,
+            samples: vec![11.0, 12.0, 12.8],
+            packet_loss_pct: 0.0,
+        },
+        download: ThroughputStats {
+            bps: 950_000_000.0,
+            mbps: 950.0,
+            peak_mbps: 980.0,
+            total_bytes: 600_000_000,
+            duration_secs: 5.0,
+            history: vec![900.0, 950.0],
+        },
+        loaded_down_latency: LatencyStats {
+            min_ms: 13.0,
+            median_ms: 14.5,
+            p90_ms: 15.0,
+            jitter_ms: 0.5,
+            samples: vec![14.5, 15.0],
+            packet_loss_pct: 0.0,
+        },
+        upload: ThroughputStats {
+            bps: 450_000_000.0,
+            mbps: 450.0,
+            peak_mbps: 470.0,
+            total_bytes: 300_000_000,
+            duration_secs: 5.0,
+            history: vec![420.0, 450.0],
+        },
+        loaded_up_latency: LatencyStats {
+            min_ms: 14.0,
+            median_ms: 16.0,
+            p90_ms: 17.0,
+            jitter_ms: 0.7,
+            samples: vec![16.0, 17.0],
+            packet_loss_pct: 0.0,
+        },
+        responsiveness: BufferbloatGrade {
+            grade: "A+".to_string(),
+            rpm: 2500,
+            working_rtt_ms: 15.0,
+            delta_ms: 3.0,
+            rating_label: "ULTRA RESPONSIVE".to_string(),
+        },
+        platform: PlatformInfo {
+            interface_name: "eth0".to_string(),
+            link_speed_mbps: Some(1000),
+            link_type: "Gigabit Ethernet".to_string(),
+            is_virtual: false,
+            bottleneck_warning: None,
+        },
+        resources: ResourceProfile {
+            cold_start_ms: 2.1,
+            peak_rss_mb: 3.2,
+            duration_secs: 5.4,
+        },
+        isp_audit: Some(IspAuditReport::compute(
+            "speed.fastly.com",
+            930.0,
+            12.5,
+            "speed.cloudflare.com",
+            950.0,
+            12.0,
+        )),
+    };
+
+    let svg_str = kiwi::ui::svg::render_svg_card(&report);
+    assert!(svg_str.starts_with("<svg"));
+    assert!(svg_str.trim().ends_with("</svg>"));
+    assert!(svg_str.contains("KIWI NETWORK RECEIPT"));
+    assert!(svg_str.contains("950.0"));
+    assert!(svg_str.contains("450.0"));
+    assert!(svg_str.contains("Peak: 980.0 Mbps"));
+    assert!(svg_str.contains("Peak: 470.0 Mbps"));
+    assert!(svg_str.contains("GRADE A+"));
+    assert!(svg_str.contains("Full-Duplex Simultaneous Saturation"));
+    assert!(svg_str.contains("NEUTRAL · HONEST ROUTING"));
+}
+
+#[test]
+fn test_bidirectional_and_quic_cli_parsing() {
+    let cli = Cli::parse_from(["kiwi", "--bidirectional", "--quic", "--prometheus", "--audit-isp"]);
+    assert!(cli.bidirectional);
+    assert!(cli.quic);
+    assert!(cli.prometheus);
+    assert!(cli.audit_isp);
+    assert!(!cli.is_json_effective());
+    assert!(cli.is_plain_effective());
+
+    let cli_alias = Cli::parse_from(["kiwi", "--simultaneous"]);
+    assert!(cli_alias.bidirectional);
 }

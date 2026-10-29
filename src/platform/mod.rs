@@ -33,6 +33,9 @@ pub mod generic {
             || lower.contains("wlan")
     }
     pub fn apply_socket_optimizations<S>(_socket: &S, _specified_iface: Option<&str>) {}
+    pub fn read_tcp_info(_fd: i32) -> Option<crate::metrics::KernelTcpInfo> {
+        None
+    }
 }
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use generic::*;

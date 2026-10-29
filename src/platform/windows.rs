@@ -31,3 +31,8 @@ pub fn is_wireless_interface(name: &str) -> bool {
 pub fn apply_socket_optimizations<S>(_socket: &S, _specified_iface: Option<&str>) {
     // Windows socket options if needed
 }
+
+pub fn read_tcp_info(_fd: i32) -> Option<crate::metrics::KernelTcpInfo> {
+    None
+}
+

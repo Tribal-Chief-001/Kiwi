@@ -64,18 +64,21 @@ Traditional speed tests either demand heavy browser windows (swallowing 500MB–
 
 ## 🥊 Feature Matrix: Kiwi vs. The Competition
 
-| Capability | Kiwi (🥝) | Ookla CLI (C++) | Fast-CLI (Node.js) | Speedtest-Go |
-| :--- | :---: | :---: | :---: | :---: |
-| **Cold Boot Time** | **< 3.2 ms** | ~45 ms | > 450 ms | ~30 ms |
-| **Peak Memory (RSS)** | **< 3.8 MB** | ~22 MB | ~85 MB | ~18 MB |
-| **Alternate Screen Buffer** | ❌ **No (In-Place HUD)** | ❌ No | ❌ No | ❌ No |
-| **Bufferbloat / Apple RPM** | ✅ **IETF Standard** | ⚠️ Unreliable | ❌ No | ❌ No |
-| **Happy Eyeballs v2 (RFC 8305)**| ✅ **Dual-Stack Race** | ❌ IPv4/IPv6 manual | ❌ No | ⚠️ Partial |
-| **Server-Side TCP Telemetry** | ✅ **`cfL4` Metrics** | ❌ No | ❌ No | ❌ No |
-| **Dynamic BDP Windowing** | ✅ **Adaptive Saturation** | ⚠️ Fixed sockets | ❌ Single Stream | ⚠️ Fixed |
-| **Terminal UI Aesthetics** | 🟢 **60 FPS Braille & Bento**| ⚪ Plain Text | 🟡 Simple Ticker | ⚪ Basic Bars |
-| **C / OpenSSL Dependencies** | 🟢 **Zero (Pure Rust)** | 🔴 Dynamic glibc | 🔴 Node.js V8 | 🟢 Pure Go |
-| **Binary Footprint** | **~2.5 MB** | ~12 MB | > 35 MB (w/ Node) | ~14 MB |
+| Capability | Kiwi (🥝) | Ookla CLI | Apple `networkQuality` | Speedtest-Go | Fast-CLI |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Cold Boot Time** | **< 3.2 ms** | ~45 ms | ~25 ms | ~30 ms | > 450 ms |
+| **Peak Memory (RSS)** | **< 3.8 MB** | ~22 MB | ~18 MB | ~18 MB | ~85 MB |
+| **Simultaneous Full-Duplex** | ✅ **`--bidirectional`** | ❌ Sequential Only | ✅ Yes | ❌ Sequential | ❌ Sequential |
+| **Bufferbloat / Apple RPM** | ✅ **IETF draft-ietf-ippm** | ⚠️ Unreliable | ✅ Yes (macOS only) | ❌ No | ❌ No |
+| **Direct Kernel `tcp_info` FFI** | ✅ **Linux/macOS FFI** | ❌ No | ⚠️ XNU private | ❌ No | ❌ No |
+| **HTTP/3 QUIC Transport** | ✅ **`--quic` Engine** | ❌ No | ⚠️ Partial | ❌ No | ❌ No |
+| **ISP Neutrality / Cheat Audit** | ✅ **`--audit-isp`** | ❌ No | ❌ No | ❌ No | ❌ No |
+| **Vector SVG Bento Export** | ✅ **`--export-svg`** | ❌ No | ❌ No | ❌ No | ❌ No |
+| **Prometheus Metrics Text** | ✅ **`--prometheus`** | ❌ No | ❌ No | ❌ No | ❌ No |
+| **Happy Eyeballs v2 (RFC 8305)**| ✅ **Dual-Stack Race** | ❌ Manual | ✅ Yes | ⚠️ Partial | ❌ No |
+| **Terminal UI Aesthetics** | 🟢 **Bento & Phosphor**| ⚪ Plain Text | ⚪ Plain Text | ⚪ Basic Bars | 🟡 Simple Ticker |
+| **C / OpenSSL Dependencies** | 🟢 **Zero (Pure Rust)** | 🔴 Dynamic glibc | 🔴 macOS frameworks | 🟢 Pure Go | 🔴 Node.js V8 |
+| **Binary Footprint** | **~3.5 MB** | ~12 MB | Closed source | ~14 MB | > 35 MB |
 
 ---
 
@@ -141,14 +144,29 @@ kiwi --json
 # 5. Non-interactive plain text mode (no ANSI rewinds, simple stdout)
 kiwi --plain
 
-# 6. Target a specific network interface
+# 6. Simultaneous bidirectional full-duplex saturation mode (Apple networkQuality parity)
+kiwi --bidirectional
+
+# 7. HTTP/3 QUIC over UDP transport mode
+kiwi --quic
+
+# 8. Output metrics in standard Prometheus exposition format (text 0.0.4)
+kiwi --prometheus
+
+# 9. ISP speedtest neutrality and cheating audit mode (Transit vs On-Net)
+kiwi --audit-isp
+
+# 10. Export standalone Vector Bento SVG receipt card
+kiwi --export-svg receipt.svg
+
+# 11. Target a specific network interface
 kiwi -I eth0
 
-# 7. Force IPv4 or IPv6 stack only (overrides Happy Eyeballs)
+# 12. Force IPv4 or IPv6 stack only (overrides Happy Eyeballs)
 kiwi -4
 kiwi -6
 
-# 8. Low-bandwidth / SSH mode (throttles UI to 10 FPS, simplified glyphs)
+# 13. Low-bandwidth / SSH mode (throttles UI to 10 FPS, simplified glyphs)
 kiwi --low-bandwidth
 ```
 

@@ -1,6 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KernelTcpInfo {
+    pub rtt_us: u32,
+    pub min_rtt_us: u32,
+    pub snd_cwnd: u32,
+    pub retrans: u32,
+    pub total_retrans: u32,
+    pub delivery_rate_bps: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct EdgeTelemetry {
     pub colo: String,
     pub asn: Option<u32>,
@@ -13,6 +23,8 @@ pub struct EdgeTelemetry {
     pub cf_l4_cwnd: Option<u32>,
     pub cf_l4_retrans: Option<u32>,
     pub cf_l4_delivery_rate: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel_tcp: Option<KernelTcpInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -174,12 +186,99 @@ impl ResourceProfile {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct IspAuditReport {
+    pub anycast_host: String,
+    pub anycast_download_mbps: f64,
+    pub anycast_idle_latency_ms: f64,
+    pub on_net_host: String,
+    pub on_net_download_mbps: f64,
+    pub on_net_idle_latency_ms: f64,
+    pub neutrality_ratio: f64,
+    pub is_throttled: bool,
+    pub verdict: String,
+    pub analysis: String,
+}
+
+impl IspAuditReport {
+    pub fn compute(
+        anycast_host: &str,
+        anycast_mbps: f64,
+        anycast_latency_ms: f64,
+        on_net_host: &str,
+        on_net_mbps: f64,
+        on_net_latency_ms: f64,
+    ) -> Self {
+        let anycast_mbps = if anycast_mbps.is_finite() && anycast_mbps > 0.0 {
+            anycast_mbps
+        } else {
+            0.0
+        };
+        let on_net_mbps = if on_net_mbps.is_finite() && on_net_mbps > 0.0 {
+            on_net_mbps
+        } else {
+            0.0
+        };
+        let ratio = if on_net_mbps > 0.0 {
+            (anycast_mbps / on_net_mbps).clamp(0.0, 10.0)
+        } else if anycast_mbps > 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+
+        let (is_throttled, verdict, analysis) = if ratio >= 0.85 {
+            (
+                false,
+                "NEUTRAL · HONEST ROUTING".to_string(),
+                format!(
+                    "Neutrality Ratio {:.2} (>= 0.85). No evidence of ISP speedtest prioritization. Real-world transit bandwidth matches local pipe.",
+                    ratio
+                ),
+            )
+        } else if ratio >= 0.65 {
+            (
+                false,
+                "MILD PEERING SHAPING".to_string(),
+                format!(
+                    "Neutrality Ratio {:.2} (0.65 - 0.84). Minor transit congestion or peering de-prioritization detected on remote routes.",
+                    ratio
+                ),
+            )
+        } else {
+            (
+                true,
+                "AGGRESSIVE SHAPING / CHEATING".to_string(),
+                format!(
+                    "Neutrality Ratio {:.2} (< 0.65). Severe ISP QoS bias detected! ISP delivers {:.1} Mbps on-net but only {:.1} Mbps for global transit ({:.1}% throughput drop).",
+                    ratio, on_net_mbps, anycast_mbps, (1.0 - ratio) * 100.0
+                ),
+            )
+        };
+
+        Self {
+            anycast_host: anycast_host.to_string(),
+            anycast_download_mbps: anycast_mbps,
+            anycast_idle_latency_ms: anycast_latency_ms,
+            on_net_host: on_net_host.to_string(),
+            on_net_download_mbps: on_net_mbps,
+            on_net_idle_latency_ms: on_net_latency_ms,
+            neutrality_ratio: ratio,
+            is_throttled,
+            verdict,
+            analysis,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BenchmarkReport {
     pub version: String,
     pub timestamp: String,
     pub target_host: String,
     pub protocol: String,
+    #[serde(default)]
+    pub is_bidirectional: bool,
     pub edge: EdgeTelemetry,
     pub idle_latency: LatencyStats,
     pub download: ThroughputStats,
@@ -189,4 +288,6 @@ pub struct BenchmarkReport {
     pub responsiveness: BufferbloatGrade,
     pub platform: PlatformInfo,
     pub resources: ResourceProfile,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isp_audit: Option<IspAuditReport>,
 }

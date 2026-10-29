@@ -52,11 +52,34 @@ pub struct Cli {
     /// Number of concurrent multiplexed streams (default: 4)
     #[arg(long, default_value = "4")]
     pub streams: usize,
+
+    /// Simultaneous bidirectional full-duplex saturation mode (Apple networkQuality parity)
+    #[arg(long, visible_alias = "simultaneous")]
+    pub bidirectional: bool,
+
+    /// Output metrics in standard Prometheus exposition format (text 0.0.4)
+    #[arg(long)]
+    pub prometheus: bool,
+
+    /// ISP speedtest neutrality and cheating audit mode (compares On-Net vs Anycast Transit)
+    #[arg(long)]
+    pub audit_isp: bool,
+
+    /// Secondary host for ISP neutrality audit comparison (defaults to speed.fastly.com)
+    #[arg(long, default_value = "speed.fastly.com")]
+    pub audit_host: String,
+
+    /// Export standalone vector SVG Bento receipt card to file path
+    #[arg(long)]
+    pub export_svg: Option<String>,
 }
 
 impl Cli {
     /// Determines whether output should be formatted as JSON automatically
     pub fn is_json_effective(&self) -> bool {
+        if self.prometheus {
+            return false;
+        }
         if self.json {
             return true;
         }
@@ -70,7 +93,7 @@ impl Cli {
 
     /// Determines whether ANSI cursor overwriting should be disabled
     pub fn is_plain_effective(&self) -> bool {
-        self.plain || !std::io::stdout().is_terminal()
+        self.plain || self.prometheus || !std::io::stdout().is_terminal()
     }
 
     /// Test phase duration in seconds

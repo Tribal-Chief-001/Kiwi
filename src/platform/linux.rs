@@ -1,6 +1,6 @@
-use crate::metrics::PlatformInfo;
+use crate::metrics::{KernelTcpInfo, PlatformInfo};
 use std::fs;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WirelessStats {
@@ -344,3 +344,38 @@ pub fn apply_socket_optimizations<S: AsRawFd>(socket: &S, specified_iface: Optio
         }
     }
 }
+
+/// Read live kernel TCP socket metrics via getsockopt(TCP_INFO) directly from Linux kernel
+pub fn read_tcp_info(fd: RawFd) -> Option<KernelTcpInfo> {
+    if fd < 0 {
+        return None;
+    }
+    unsafe {
+        let mut info: libc::tcp_info = std::mem::zeroed();
+        let mut len = std::mem::size_of::<libc::tcp_info>() as libc::socklen_t;
+        let res = libc::getsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_INFO,
+            &mut info as *mut _ as *mut libc::c_void,
+            &mut len,
+        );
+        if res == 0 && len as usize >= std::mem::size_of::<u32>() * 8 {
+            Some(KernelTcpInfo {
+                rtt_us: info.tcpi_rtt,
+                min_rtt_us: info.tcpi_min_rtt,
+                snd_cwnd: info.tcpi_snd_cwnd,
+                retrans: info.tcpi_retrans,
+                total_retrans: info.tcpi_total_retrans,
+                delivery_rate_bps: if info.tcpi_delivery_rate > 0 {
+                    Some(info.tcpi_delivery_rate * 8)
+                } else {
+                    None
+                },
+            })
+        } else {
+            None
+        }
+    }
+}
+

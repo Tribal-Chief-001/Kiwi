@@ -25,9 +25,11 @@ pub static UPLOAD_BUFFER: LazyLock<Bytes> = LazyLock::new(|| {
 });
 
 /// Represents an established HTTP/2 client multiplexer.
+#[derive(Clone)]
 pub struct H2Client {
     pub send_request: SendRequest<Bytes>,
     pub host: String,
+    pub raw_fd: Option<i32>,
 }
 
 impl H2Client {
@@ -35,6 +37,14 @@ impl H2Client {
         tls_stream: TlsStream<TcpStream>,
         host: String,
     ) -> Result<Self, std::io::Error> {
+        #[cfg(unix)]
+        let raw_fd = {
+            use std::os::unix::io::AsRawFd;
+            Some(tls_stream.get_ref().0.as_raw_fd())
+        };
+        #[cfg(not(unix))]
+        let raw_fd = None;
+
         let mut builder = Builder::new();
         // Dynamic BDP window scaling: 1MB stream, 2MB connection window
         builder.initial_window_size(1024 * 1024);
@@ -53,7 +63,11 @@ impl H2Client {
             let _ = connection.await;
         });
 
-        Ok(H2Client { send_request, host })
+        Ok(H2Client {
+            send_request,
+            host,
+            raw_fd,
+        })
     }
 
     /// Dispatch a single in-band latency probe to measure RTT without bulk stream distortion.

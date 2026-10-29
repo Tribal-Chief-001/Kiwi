@@ -2,6 +2,8 @@ pub mod art;
 pub mod bento;
 pub mod braille;
 pub mod layout;
+pub mod prometheus;
+pub mod svg;
 
 use crate::metrics::{
     BenchmarkReport, BufferbloatGrade, EdgeTelemetry, LatencyStats, ResourceProfile,
@@ -22,6 +24,8 @@ pub enum TestPhase {
     IdleLatency,
     Download,
     Upload,
+    Bidirectional,
+    AuditIsp,
     Complete,
 }
 
@@ -29,6 +33,8 @@ pub struct LiveUiState {
     pub phase: TestPhase,
     pub current_mbps: f64,
     pub peak_mbps: f64,
+    pub down_mbps: f64,
+    pub up_mbps: f64,
     pub total_bytes: u64,
     pub elapsed_secs: f64,
     pub active_streams: usize,
@@ -130,12 +136,18 @@ impl TerminalRenderer {
                     }
                     TestPhase::Download => ("SATURATED DOWNLOAD THROUGHPUT", CYBER_CYAN),
                     TestPhase::Upload => ("SATURATED UPLOAD THROUGHPUT", NEON_MAGENTA),
+                    TestPhase::Bidirectional => {
+                        ("FULL-DUPLEX SIMULTANEOUS SATURATION", KIWI_EMERALD)
+                    }
+                    TestPhase::AuditIsp => ("ISP ROUTING NEUTRALITY AUDIT", ELECTRIC_AMBER),
                     TestPhase::Complete => ("BENCHMARK FINALIZING...", KIWI_EMERALD),
                 };
                 let fps_str = if layout.is_ssh { "10 FPS" } else { "20 FPS" };
                 let dir_symbol = match state.phase {
                     TestPhase::Download => "▲",
                     TestPhase::Upload => "▼",
+                    TestPhase::Bidirectional => "▲▼",
+                    TestPhase::AuditIsp => "⚖",
                     _ => "⚡",
                 };
                 let title_line = format!(
@@ -153,11 +165,19 @@ impl TerminalRenderer {
                 let (top_wave, bot_wave) =
                     render_phosphor_canvas(&state.throughput_history, braille_width);
 
-                let speed_badge = format!(
-                    "{} {}",
-                    color_bold(&format!("{:>6.1} Mbps", state.current_mbps), phase_color),
-                    color_fg(&format!("(Peak: {:>5.1})", state.peak_mbps), DIM_GRAY),
-                );
+                let speed_badge = if state.phase == TestPhase::Bidirectional {
+                    format!(
+                        "{} · {}",
+                        color_bold(&format!("↓{:>5.1}M", state.down_mbps), CYBER_CYAN),
+                        color_bold(&format!("↑{:>5.1}M", state.up_mbps), NEON_MAGENTA),
+                    )
+                } else {
+                    format!(
+                        "{} {}",
+                        color_bold(&format!("{:>6.1} Mbps", state.current_mbps), phase_color),
+                        color_fg(&format!("(Peak: {:>5.1})", state.peak_mbps), DIM_GRAY),
+                    )
+                };
                 let transferred_mb = state.total_bytes as f64 / (1024.0 * 1024.0);
                 let transferred_str = format!("Transferred: {:>5.1} MB", transferred_mb);
 
@@ -287,6 +307,8 @@ impl TerminalRenderer {
                     TestPhase::IdleLatency => "Idle Ping",
                     TestPhase::Download => "Download",
                     TestPhase::Upload => "Upload",
+                    TestPhase::Bidirectional => "Simultaneous",
+                    TestPhase::AuditIsp => "ISP Audit",
                     TestPhase::Complete => "Done",
                 };
 
@@ -295,12 +317,22 @@ impl TerminalRenderer {
                 buffer.push('\n');
                 line_count += 1;
 
-                let spd = format!(
-                    "{} {:.1} Mbps  (Peak: {:.1} Mbps)",
-                    color_bold("SPEED:", KIWI_EMERALD),
-                    state.current_mbps,
-                    state.peak_mbps
-                );
+                let spd = if state.phase == TestPhase::Bidirectional {
+                    format!(
+                        "{} ↓{:.1}M ↑{:.1}M (Agg: {:.1}M)",
+                        color_bold("SPEED:", KIWI_EMERALD),
+                        state.down_mbps,
+                        state.up_mbps,
+                        state.current_mbps
+                    )
+                } else {
+                    format!(
+                        "{} {:.1} Mbps  (Peak: {:.1} Mbps)",
+                        color_bold("SPEED:", KIWI_EMERALD),
+                        state.current_mbps,
+                        state.peak_mbps
+                    )
+                };
                 buffer.push_str(&box_row(&spd, width));
                 buffer.push('\n');
                 line_count += 1;
@@ -339,6 +371,10 @@ impl TerminalRenderer {
                 let p_str = match state.phase {
                     TestPhase::Download => format!("Down: {:.1}M", state.current_mbps),
                     TestPhase::Upload => format!("Up: {:.1}M", state.current_mbps),
+                    TestPhase::Bidirectional => {
+                        format!("↓{:.1}M ↑{:.1}M", state.down_mbps, state.up_mbps)
+                    }
+                    TestPhase::AuditIsp => format!("Audit: {:.1}M", state.current_mbps),
                     TestPhase::IdleLatency => "Ping".to_string(),
                     _ => "Init".to_string(),
                 };

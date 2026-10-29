@@ -22,14 +22,24 @@ pub struct Http1Client {
     pub stream: TlsStream<TcpStream>,
     pub host: String,
     pub read_buf: Vec<u8>,
+    pub raw_fd: Option<i32>,
 }
 
 impl Http1Client {
     pub fn new(stream: TlsStream<TcpStream>, host: String) -> Self {
+        #[cfg(unix)]
+        let raw_fd = {
+            use std::os::unix::io::AsRawFd;
+            Some(stream.get_ref().0.as_raw_fd())
+        };
+        #[cfg(not(unix))]
+        let raw_fd = None;
+
         Http1Client {
             stream,
             host,
             read_buf: Vec::with_capacity(4096),
+            raw_fd,
         }
     }
 

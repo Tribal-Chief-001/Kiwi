@@ -7,9 +7,13 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use crate::metrics::KernelTcpInfo;
+use crate::protocol::h3::H3Client;
+
 pub enum ClientHandle {
     H2(H2Client),
     Http1(Box<Http1Client>),
+    H3(H3Client),
 }
 
 impl ClientHandle {
@@ -20,6 +24,26 @@ impl ClientHandle {
         match self {
             ClientHandle::H2(h2) => h2.dispatch_probe(probe_pending).await,
             ClientHandle::Http1(h1) => h1.dispatch_probe(probe_pending).await,
+            ClientHandle::H3(h3) => h3.dispatch_probe(probe_pending).await,
+        }
+    }
+
+    pub fn raw_fd(&self) -> Option<i32> {
+        match self {
+            ClientHandle::H2(h2) => h2.raw_fd,
+            ClientHandle::Http1(h1) => h1.raw_fd,
+            ClientHandle::H3(_) => None,
+        }
+    }
+
+    pub fn read_kernel_tcp_info(&self) -> Option<KernelTcpInfo> {
+        #[cfg(unix)]
+        {
+            self.raw_fd().and_then(crate::platform::read_tcp_info)
+        }
+        #[cfg(not(unix))]
+        {
+            None
         }
     }
 }
@@ -65,22 +89,48 @@ pub async fn run_idle_latency_test_with_progress(
                 if edge_telemetry.is_none() && telemetry.is_some() {
                     edge_telemetry = telemetry;
                 }
+                if let Some(ref mut telem) = edge_telemetry
+                    && let Some(kinfo) = client.read_kernel_tcp_info()
+                {
+                    telem.kernel_tcp = Some(kinfo);
+                    if telem.cf_l4_cwnd.is_none() && kinfo.snd_cwnd > 0 {
+                        telem.cf_l4_cwnd = Some(kinfo.snd_cwnd);
+                    }
+                    if telem.cf_l4_rtt_us.is_none() && kinfo.rtt_us > 0 {
+                        telem.cf_l4_rtt_us = Some(kinfo.rtt_us as u64);
+                    }
+                    if telem.cf_l4_min_rtt_us.is_none() && kinfo.min_rtt_us > 0 {
+                        telem.cf_l4_min_rtt_us = Some(kinfo.min_rtt_us as u64);
+                    }
+                    if telem.cf_l4_retrans.is_none() {
+                        telem.cf_l4_retrans = Some(kinfo.total_retrans.max(kinfo.retrans));
+                    }
+                }
                 on_probe(i + 1, rtt_ms, &edge_telemetry);
             }
             Err(_) => {
                 // If idle probe dropped or timed out under severe packet loss,
                 // re-establish connection so subsequent idle probes have a fresh socket.
-                if let Ok(conn) = connect_happy_eyeballs(host, candidates, specified_iface).await {
-                    let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
-                    if is_h2 {
-                        if let Ok(h2) = H2Client::new(conn.tls_stream, host.to_string()).await {
-                            *client = ClientHandle::H2(h2);
+                match client {
+                    ClientHandle::H3(_) => {
+                        if let Ok(h3) = H3Client::connect(host, candidates).await {
+                            *client = ClientHandle::H3(h3);
                         }
-                    } else {
-                        *client = ClientHandle::Http1(Box::new(Http1Client::new(
-                            conn.tls_stream,
-                            host.to_string(),
-                        )));
+                    }
+                    _ => {
+                        if let Ok(conn) = connect_happy_eyeballs(host, candidates, specified_iface).await {
+                            let is_h2 = conn.alpn.as_deref().map(|p| p == b"h2").unwrap_or(false);
+                            if is_h2 {
+                                if let Ok(h2) = H2Client::new(conn.tls_stream, host.to_string()).await {
+                                    *client = ClientHandle::H2(h2);
+                                }
+                            } else {
+                                *client = ClientHandle::Http1(Box::new(Http1Client::new(
+                                    conn.tls_stream,
+                                    host.to_string(),
+                                )));
+                            }
+                        }
                     }
                 }
             }

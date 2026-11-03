@@ -10,8 +10,8 @@ use tokio::time::sleep;
 
 const CONNECTION_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 const TLS_HANDSHAKE_GUARD_DURATION: Duration = Duration::from_millis(500);
-const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const TCP_CONNECT_TIMEOUT: Duration = Duration::from_millis(2500);
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(3000);
 
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;

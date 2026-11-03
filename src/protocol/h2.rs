@@ -155,6 +155,7 @@ impl H2Client {
         probe_pending: Arc<AtomicBool>,
     ) -> Result<Option<EdgeTelemetry>, std::io::Error> {
         let mut telemetry = None;
+        let mut current_chunk_bytes = bytes_to_fetch.min(1_000_000);
 
         while !stop_signal.load(Ordering::Relaxed) {
             let mut ready = match send_request.clone().ready().await {
@@ -162,7 +163,8 @@ impl H2Client {
                 Err(_) => break,
             };
 
-            let path = crate::protocol::download_path(&host, bytes_to_fetch);
+            let req_start = Instant::now();
+            let path = crate::protocol::download_path(&host, current_chunk_bytes);
             let request = Request::builder()
                 .method(Method::GET)
                 .uri(format!("https://{}{}", host, path))
@@ -186,6 +188,7 @@ impl H2Client {
             let is_success = status.is_success();
 
             if status == http::StatusCode::TOO_MANY_REQUESTS {
+                current_chunk_bytes = (current_chunk_bytes / 2).max(250_000);
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             } else if !is_success {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -214,7 +217,7 @@ impl H2Client {
 
                 if is_success {
                     local_batch += len as u64;
-                    if local_batch >= 65536 {
+                    if local_batch >= 16384 {
                         total_counter.fetch_add(local_batch, Ordering::Relaxed);
                         local_batch = 0;
                     }
@@ -232,6 +235,12 @@ impl H2Client {
 
             if local_batch > 0 {
                 total_counter.fetch_add(local_batch, Ordering::Relaxed);
+            }
+
+            // Rapid ramp-up for high throughput pipes
+            let elapsed_chunk = req_start.elapsed();
+            if is_success && elapsed_chunk < std::time::Duration::from_millis(300) {
+                current_chunk_bytes = (current_chunk_bytes * 2).min(bytes_to_fetch);
             }
         }
 

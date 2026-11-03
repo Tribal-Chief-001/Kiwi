@@ -173,9 +173,11 @@ impl H3Client {
         probe_pending: Arc<AtomicBool>,
     ) -> Result<Option<EdgeTelemetry>, std::io::Error> {
         let mut telemetry = None;
+        let mut current_chunk_bytes = bytes_to_fetch.min(1_000_000);
 
         while !stop_signal.load(Ordering::Relaxed) {
-            let path = crate::protocol::download_path(&host, bytes_to_fetch);
+            let req_start = Instant::now();
+            let path = crate::protocol::download_path(&host, current_chunk_bytes);
             let req = Request::builder()
                 .method(Method::GET)
                 .uri(format!("https://{}{}", host, path))
@@ -200,6 +202,7 @@ impl H3Client {
             let is_success = status.is_success();
 
             if status == http::StatusCode::TOO_MANY_REQUESTS {
+                current_chunk_bytes = (current_chunk_bytes / 2).max(250_000);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             } else if !is_success {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -220,7 +223,7 @@ impl H3Client {
 
                 if is_success {
                     local_batch += len as u64;
-                    if local_batch >= 65536 {
+                    if local_batch >= 16384 {
                         total_counter.fetch_add(local_batch, Ordering::Relaxed);
                         local_batch = 0;
                     }
@@ -237,6 +240,12 @@ impl H3Client {
 
             if local_batch > 0 {
                 total_counter.fetch_add(local_batch, Ordering::Relaxed);
+            }
+
+            // Rapid ramp up for high capacity pipes
+            let elapsed_chunk = req_start.elapsed();
+            if is_success && elapsed_chunk < Duration::from_millis(300) {
+                current_chunk_bytes = (current_chunk_bytes * 2).min(bytes_to_fetch);
             }
         }
 

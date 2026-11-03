@@ -4,7 +4,7 @@ use crate::protocol::{PROBE_TIMEOUT, ProbePendingGuard};
 use http::HeaderMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::protocol::AnyStream;
@@ -101,8 +101,13 @@ impl Http1Client {
         let mut telemetry = None;
         let mut sink = [0u8; 16384];
 
-        let path = crate::protocol::download_path(&self.host, bytes_per_req);
+        // Adaptive chunk sizing: start with 1MB to prevent pipe-stall on lossy/high-RTT links,
+        // ramp up smoothly to bytes_per_req on high-bandwidth links.
+        let mut current_chunk_bytes = bytes_per_req.min(1_000_000);
+
         while !stop_signal.load(Ordering::Relaxed) {
+            let path = crate::protocol::download_path(&self.host, current_chunk_bytes);
+            let req_start = Instant::now();
             let req = format!(
                 "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: kiwi/1.0.0\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
                 path, self.host
@@ -123,7 +128,8 @@ impl Http1Client {
             let is_success = meta.status_code >= 200 && meta.status_code < 300;
 
             if meta.status_code == 429 {
-                // Rate limited: back off and drain body without counting
+                // Rate limited: back off and reduce chunk size
+                current_chunk_bytes = (current_chunk_bytes / 2).max(250_000);
                 let _ = self.drain_body(meta.is_chunked, meta.content_length).await;
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 if meta.connection_close {
@@ -184,7 +190,7 @@ impl Http1Client {
                         remaining -= n as u64;
                         local_batch += n as u64;
 
-                        if local_batch >= 65536 {
+                        if local_batch >= 16384 {
                             total_counter.fetch_add(local_batch, Ordering::Relaxed);
                             local_batch = 0;
                         }
@@ -198,12 +204,22 @@ impl Http1Client {
                         }
                     }
 
+                    if local_batch > 0 {
+                        total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                        local_batch = 0;
+                    }
+
                     if remaining > 0 {
                         break;
                     }
 
                     // Read chunk trailing CRLF
                     let _ = self.read_exact_bytes(2).await;
+                }
+
+                if local_batch > 0 {
+                    total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                    local_batch = 0;
                 }
 
                 if meta.connection_close {
@@ -230,7 +246,7 @@ impl Http1Client {
                     remaining -= n as u64;
                     local_batch += n as u64;
 
-                    if local_batch >= 65536 {
+                    if local_batch >= 16384 {
                         total_counter.fetch_add(local_batch, Ordering::Relaxed);
                         local_batch = 0;
                     }
@@ -242,6 +258,11 @@ impl Http1Client {
                         }
                         tokio::task::yield_now().await;
                     }
+                }
+
+                if local_batch > 0 {
+                    total_counter.fetch_add(local_batch, Ordering::Relaxed);
+                    local_batch = 0;
                 }
 
                 if remaining > 0 || meta.connection_close {
@@ -257,16 +278,25 @@ impl Http1Client {
                         Err(_) => break,
                     };
                     local_batch += n as u64;
-                    if local_batch >= 65536 {
+                    if local_batch >= 16384 {
                         total_counter.fetch_add(local_batch, Ordering::Relaxed);
                         local_batch = 0;
                     }
+                }
+                if local_batch > 0 {
+                    total_counter.fetch_add(local_batch, Ordering::Relaxed);
                 }
                 break;
             }
 
             if local_batch > 0 {
                 total_counter.fetch_add(local_batch, Ordering::Relaxed);
+            }
+
+            // Rapid ramp up for high capacity connections
+            let elapsed_chunk = req_start.elapsed();
+            if is_success && elapsed_chunk < Duration::from_millis(300) {
+                current_chunk_bytes = (current_chunk_bytes * 2).min(bytes_per_req);
             }
         }
 
